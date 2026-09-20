@@ -71,3 +71,32 @@ def test_floodfill_turns_when_forward_blocked() -> None:
     )
     assert next_state.cell == curr_cell  # Turn in place
     assert next_state.heading != Direction.NORTH
+
+
+def test_floodfill_unvisited_preference_breaks_oscillation() -> None:
+    """Verify that unvisited cells are prioritized over visited cells when distances are tied.
+
+    In a symmetric corridor where North and West both have distance 7:
+    If North was already visited, but West is unvisited, the robot facing North must turn West
+    rather than blindly repeating the visited North corridor.
+    """
+    grid = MazeGrid()
+    curr_cell = Cell(3, 3)
+    dist_map = [[10 for _ in range(10)] for _ in range(10)]
+
+    # Make North and West equidistant (dist 7)
+    north_cell = curr_cell.neighbor(Direction.NORTH)  # (2, 3)
+    west_cell = curr_cell.neighbor(Direction.WEST)  # (3, 2)
+    dist_map[north_cell.row][north_cell.col] = 7
+    dist_map[west_cell.row][west_cell.col] = 7
+
+    # Mark north cell as visited, west cell as unvisited
+    visited = {north_cell}
+
+    # Facing North: heading tie-breaker would pick North, but visited preference MUST pick West!
+    state = RobotState(cell=curr_cell, heading=Direction.NORTH)
+    cmd, next_state = get_next_search_move(state, grid, dist_map, visited_cells=visited)
+
+    # West is to the left of North, so robot should turn left towards the unvisited cell
+    assert cmd == MovementCommand.TURN_LEFT
+    assert next_state.heading == Direction.WEST

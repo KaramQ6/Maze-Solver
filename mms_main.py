@@ -4,6 +4,7 @@ Implements the official MMS protocol with strict stdin/stdout synchronization.
 """
 
 import sys
+from collections import defaultdict
 from typing import Any
 
 from maze_solver.core.floodfill import compute_distance_map, get_next_search_move
@@ -131,6 +132,7 @@ def run_mms_solver() -> None:
 
     step_count = 0
     max_steps = width * height * 8
+    visit_counts: dict[Cell, int] = defaultdict(int)
 
     dir_char_map = {
         Direction.NORTH: "n",
@@ -169,7 +171,8 @@ def run_mms_solver() -> None:
         if wb:
             MMS_API.set_wall(x, y, dir_char_map[state.heading.opposite()])
 
-        # Trail color
+        # Trail color and visitation tracking (anti-oscillation)
+        visit_counts[state.cell] += 1
         MMS_API.set_color(x, y, "G")
 
         # Check goal arrival
@@ -185,8 +188,10 @@ def run_mms_solver() -> None:
         if d_val < 9000:
             MMS_API.set_text(x, y, str(d_val))
 
-        # Next move
-        cmd, next_state = get_next_search_move(state, grid, dist_map, goals=goals)
+        # Next move prioritizing unvisited exploration over oscillation loops
+        cmd, next_state = get_next_search_move(
+            state, grid, dist_map, goals=goals, visited_cells=visit_counts
+        )
 
         # Dispatch motion
         if cmd == MovementCommand.FORWARD:

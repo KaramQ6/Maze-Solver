@@ -1,7 +1,7 @@
 """Converts Peter Harrison classic mazes and MMRC26 procedural mazes to MMS .num format."""
 
-import os
 from pathlib import Path
+
 from maze_solver.simulator.maze_generator import generate_island_maze
 
 
@@ -10,7 +10,7 @@ def convert_txt_to_num(txt_path: Path, output_path: Path) -> bool:
     try:
         content = txt_path.read_text(encoding="utf-8", errors="ignore")
         lines = [line.rstrip() for line in content.splitlines()]
-        rows = [l for l in lines if l.startswith(("o", "|"))]
+        rows = [raw_line for raw_line in lines if raw_line.startswith(("o", "|"))]
 
         if not rows or len(rows) < 3:
             return False

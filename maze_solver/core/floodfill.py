@@ -52,14 +52,16 @@ def get_next_search_move(
     grid: MazeGrid,
     distance_map: list[list[int]],
     goals: tuple[tuple[int, int], ...] = MazeConfig.GOAL_CELLS,
+    visited_cells: set[Cell] | dict[Cell, int] | None = None,
 ) -> tuple[MovementCommand, RobotState]:
     """Determine the next discrete navigation command during the search/mapping run.
 
-    Tie-breaking priority per Master Plan §4.1:
-    1. Forward (current heading)
-    2. Left
-    3. Right
-    4. Turn Around
+    Tie-breaking priority per Master Plan §4.1 (Anti-Oscillation):
+    1. Unvisited or least-visited cells (prevents cyclical ping-pong traps)
+    2. Forward (current heading)
+    3. Left
+    4. Right
+    5. Turn Around
     """
     # Check if robot has arrived at destination
     if (state.cell.row, state.cell.col) in goals:
@@ -75,27 +77,39 @@ def get_next_search_move(
     min_dist = min(distance_map[neighbor.row][neighbor.col] for neighbor, _ in passable)
 
     # Filter candidate directions that achieve min_dist
-    best_directions = {
-        direction
+    candidates = [
+        (neighbor, direction)
         for neighbor, direction in passable
         if distance_map[neighbor.row][neighbor.col] == min_dist
-    }
+    ]
 
-    # Deterministic tie-breaking hierarchy
     current_h = state.heading
     left_h = current_h.turn_left()
     right_h = current_h.turn_right()
     back_h = current_h.turn_around()
 
-    target_direction: Direction
-    if current_h in best_directions:
-        target_direction = current_h
-    elif left_h in best_directions:
-        target_direction = left_h
-    elif right_h in best_directions:
-        target_direction = right_h
-    else:
-        target_direction = back_h
+    def heading_rank(d: Direction) -> int:
+        if d == current_h:
+            return 0
+        if d == left_h:
+            return 1
+        if d == right_h:
+            return 2
+        return 3
+
+    def visit_rank(c: Cell) -> int:
+        if visited_cells is None:
+            return 0
+        if isinstance(visited_cells, set):
+            return 1 if c in visited_cells else 0
+        return visited_cells.get(c, 0)
+
+    # Sort candidates: least visited first, then deterministic heading order
+    best_candidate = min(
+        candidates,
+        key=lambda item: (visit_rank(item[0]), heading_rank(item[1])),
+    )
+    target_direction = best_candidate[1]
 
     # Translate target direction to motion primitive
     if target_direction == current_h:

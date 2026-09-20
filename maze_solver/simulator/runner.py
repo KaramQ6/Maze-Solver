@@ -100,7 +100,11 @@ def run_search(
 
         # E. Determine next command
         command, _ = get_next_search_move(
-            current_pose, discovered_grid, distance_map, MazeConfig.GOAL_CELLS
+            current_pose,
+            discovered_grid,
+            distance_map,
+            MazeConfig.GOAL_CELLS,
+            visited_cells=visited_cells,
         )
 
         if command == MovementCommand.HALT:
