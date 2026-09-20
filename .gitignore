@@ -48,6 +48,10 @@ firmware/build/
 *.o
 
 # External Tools & Simulators
-tools/
+tools/*
+!tools/register_mazes_in_mms.py
+!tools/mms
+!tools/mms/launch_mms.bat
 mazes/
 mazes_num/
+
