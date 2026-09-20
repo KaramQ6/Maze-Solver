@@ -143,6 +143,18 @@ def smooth_path_to_diagonals(
                 start_c = poses[i].cell
                 end_c = poses[i + 4].cell
                 if is_diagonal_clear(grid, start_c, end_c):
+                    # Chain all consecutive matching zigzags into a single continuous sprint
+                    k = 1
+                    target_pattern = (c1, c2, c3, c4)
+                    while i + (k + 1) * 4 <= n:
+                        next_chunk = tuple(commands[i + k * 4 : i + (k + 1) * 4])
+                        if next_chunk == target_pattern and is_diagonal_clear(
+                            grid, poses[i + k * 4].cell, poses[i + (k + 1) * 4].cell
+                        ):
+                            k += 1
+                        else:
+                            break
+
                     entry_turn = (
                         MotionSegmentType.TURN_45_ENTRY_RIGHT
                         if is_right_zigzag
@@ -158,8 +170,8 @@ def smooth_path_to_diagonals(
                     segments.append(
                         MotionSegment(
                             segment_type=MotionSegmentType.DIAGONAL_SPRINT,
-                            distance_m=diagonal_unit,
-                            units_count=1,
+                            distance_m=k * diagonal_unit,
+                            units_count=k,
                         )
                     )
                     exit_turn = (
@@ -174,7 +186,7 @@ def smooth_path_to_diagonals(
                             units_count=1,
                         )
                     )
-                    i += 4
+                    i += k * 4
                     continue
 
         if cmd == MovementCommand.FORWARD:

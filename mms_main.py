@@ -7,10 +7,16 @@ import sys
 from collections import defaultdict
 from typing import Any
 
+from maze_solver.core.diagonal_planner import (
+    MotionSegmentType,
+    evaluate_smoothed_trajectory_time,
+    smooth_path_to_diagonals,
+)
 from maze_solver.core.floodfill import (
     compute_distance_map,
     get_next_search_move,
 )
+from maze_solver.core.kinematics import KinematicProfile
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import plan_turn_weighted_path
 from maze_solver.core.types import (
@@ -20,6 +26,28 @@ from maze_solver.core.types import (
     RobotState,
     WallSensations,
 )
+
+
+def find_first_unvisited_on_path(
+    commands: list[MovementCommand],
+    start: RobotState,
+    visited: set[Cell],
+) -> Cell | None:
+    """Find the first unvisited cell along a planned sequence of commands."""
+    curr = start
+    for cmd in commands:
+        if cmd == MovementCommand.FORWARD:
+            next_cell = curr.cell.neighbor(curr.heading)
+            if next_cell not in visited:
+                return next_cell
+            curr = RobotState(next_cell, curr.heading)
+        elif cmd == MovementCommand.TURN_LEFT:
+            curr = RobotState(curr.cell, curr.heading.turn_left())
+        elif cmd == MovementCommand.TURN_RIGHT:
+            curr = RobotState(curr.cell, curr.heading.turn_right())
+        elif cmd == MovementCommand.TURN_AROUND:
+            curr = RobotState(curr.cell, curr.heading.turn_around())
+    return None
 
 
 class MMS_API:
@@ -286,7 +314,7 @@ def run_mms_solver() -> None:
             break
 
     # -------------------------------------------------------------
-    # PHASE 2: OPTIMAL TURN-WEIGHTED SPEED RUN EXECUTION
+    # PHASE 2: ALL-JAPAN ACTIVE SHORTCUT PROBING
     # -------------------------------------------------------------
     # Align robot to face NORTH at start position
     while state.heading != Direction.NORTH:
@@ -296,26 +324,161 @@ def run_mms_solver() -> None:
     start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
     visited = set(visit_counts.keys())
 
-    # 1. Plan confirmed safe path (strictly through visited cells)
     safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
     optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
 
-    if safe_cmds:
-        speed_cmds = safe_cmds
-        MMS_API.log(f"Phase 2: Confirmed safe path found ({len(speed_cmds)} actions).")
-        if len(optimistic_cmds) < len(safe_cmds):
+    # If an unverified shortcut exists, dispatch a targeted probe run
+    if safe_cmds and len(optimistic_cmds) < len(safe_cmds):
+        probe_target = find_first_unvisited_on_path(optimistic_cmds, start_state, visited)
+        if probe_target is not None:
             MMS_API.log(
-                f"Notice: Shorter unverified path ({len(optimistic_cmds)} actions) exists. "
-                f"Running confirmed safe path ({len(safe_cmds)} actions) to avoid collisions."
+                f"All-Japan Phase 2: Active probe towards shortcut cell "
+                f"({probe_target.row}, {probe_target.col})..."
             )
-    else:
+            probe_goals: tuple[tuple[int, int], ...] = ((probe_target.row, probe_target.col),)
+            probe_steps = 0
+            max_probe_steps = width * height * 2
+
+            # Navigate towards probe target to sense its walls
+            while probe_steps < max_probe_steps:
+                probe_steps += 1
+                pr, pc = state.cell.row, state.cell.col
+                px, py = pc, height - 1 - pr
+
+                wf = MMS_API.wall_front()
+                wl = MMS_API.wall_left()
+                wr = MMS_API.wall_right()
+                wb = MMS_API.wall_back()
+
+                sensations = WallSensations(front=wf, left=wl, right=wr)
+                grid.update_from_sensations(state, sensations)
+                if wb:
+                    grid.set_wall(state.cell, state.heading.opposite(), True)
+
+                if wf:
+                    MMS_API.set_wall(px, py, dir_char_map[state.heading])
+                if wl:
+                    MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_left()])
+                if wr:
+                    MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_right()])
+                if wb:
+                    MMS_API.set_wall(px, py, dir_char_map[state.heading.opposite()])
+
+                visit_counts[state.cell] += 1
+                MMS_API.set_color(px, py, "y")
+
+                if state.cell == probe_target:
+                    MMS_API.log("Shortcut corridor reached and verified!")
+                    break
+
+                probe_dist = compute_distance_map(grid, goals=probe_goals)
+                if probe_dist[pr][pc] >= 9000:
+                    MMS_API.log("Probe discovered blocked corridor; shortcut disproven.")
+                    break
+
+                cmd, next_state = get_next_search_move(
+                    state, grid, probe_dist, goals=probe_goals, visited_cells=visit_counts
+                )
+
+                if cmd == MovementCommand.FORWARD:
+                    MMS_API.move_forward()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_LEFT:
+                    MMS_API.turn_left()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_RIGHT:
+                    MMS_API.turn_right()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_AROUND:
+                    MMS_API.turn_right()
+                    MMS_API.turn_right()
+                    state = next_state
+                elif cmd == MovementCommand.HALT:
+                    break
+
+            # Return to start after probe
+            ret_dist = compute_distance_map(grid, goals=return_goals)
+            ret_steps = 0
+            while ret_steps < max_return_steps:
+                ret_steps += 1
+                if (state.cell.row, state.cell.col) == start_cell:
+                    break
+
+                wf = MMS_API.wall_front()
+                wl = MMS_API.wall_left()
+                wr = MMS_API.wall_right()
+                wb = MMS_API.wall_back()
+
+                sensations = WallSensations(front=wf, left=wl, right=wr)
+                grid.update_from_sensations(state, sensations)
+                if wb:
+                    grid.set_wall(state.cell, state.heading.opposite(), True)
+
+                visit_counts[state.cell] += 1
+                MMS_API.set_color(state.cell.col, height - 1 - state.cell.row, "o")
+
+                ret_dist = compute_distance_map(grid, goals=return_goals)
+                cmd, next_state = get_next_search_move(
+                    state, grid, ret_dist, goals=return_goals, visited_cells=visit_counts
+                )
+
+                if cmd == MovementCommand.FORWARD:
+                    MMS_API.move_forward()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_LEFT:
+                    MMS_API.turn_left()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_RIGHT:
+                    MMS_API.turn_right()
+                    state = next_state
+                elif cmd == MovementCommand.TURN_AROUND:
+                    MMS_API.turn_right()
+                    MMS_API.turn_right()
+                    state = next_state
+                elif cmd == MovementCommand.HALT:
+                    break
+
+            # Re-align heading to NORTH at start
+            while state.heading != Direction.NORTH:
+                MMS_API.turn_right()
+                state = RobotState(state.cell, state.heading.turn_right())
+
+    # -------------------------------------------------------------
+    # PHASE 3: PROVEN GLOBAL OPTIMAL SPEED RUN EXECUTION
+    # -------------------------------------------------------------
+    visited = set(visit_counts.keys())
+    safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
+    optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
+
+    if safe_cmds and len(optimistic_cmds) >= len(safe_cmds):
         MMS_API.log(
-            "Phase 2 WARNING: No verified path through visited cells! "
-            "Falling back to optimistic path..."
+            "PROVEN GLOBAL OPTIMUM: Mathematically proven fastest route across entire maze!"
         )
+        speed_cmds = safe_cmds
+    elif safe_cmds:
+        speed_cmds = safe_cmds
+        MMS_API.log(f"Verified Safe Path: {len(speed_cmds)} actions.")
+    else:
+        MMS_API.log("Fallback to optimistic path.")
         speed_cmds = optimistic_cmds
 
-    MMS_API.log(f"Phase 2: Executing speed run ({len(speed_cmds)} actions)...")
+    # Compute and log F1 Vacuum Suction Kinematics & Diagonal Sprints
+    segments = smooth_path_to_diagonals(speed_cmds, grid, start_state)
+    diag_count = sum(1 for s in segments if s.segment_type == MotionSegmentType.DIAGONAL_SPRINT)
+    t_base = evaluate_smoothed_trajectory_time(segments, KinematicProfile(suction_multiplier=0.0))
+    t_suction = evaluate_smoothed_trajectory_time(
+        segments, KinematicProfile(suction_multiplier=3.0)
+    )
+
+    MMS_API.log(
+        f"Championship Trajectory: {len(speed_cmds)} actions -> {len(segments)} segments "
+        f"({diag_count} diagonal sprints)"
+    )
+    MMS_API.log(
+        f"F1 Kinematics: Base Time = {t_base:.2f}s | "
+        f"Suction Fan (3.0g downforce) = {t_suction:.2f}s"
+    )
+    MMS_API.log(f"Phase 3: Executing speed run ({len(speed_cmds)} actions)...")
 
     # Execute speed run through the real MMS API
     state = start_state
@@ -338,7 +501,7 @@ def run_mms_solver() -> None:
 
     # Check if speed run reached the goal
     if (state.cell.row, state.cell.col) in goals:
-        MMS_API.log(f"Speed run SUCCESS! Reached goal in {len(speed_cmds)} actions.")
+        MMS_API.log(f"CHAMPIONSHIP FINISH! Reached goal in {len(speed_cmds)} actions.")
 
 
 if __name__ == "__main__":

@@ -78,10 +78,11 @@ static float heuristic_manhattan(uint8_t r, uint8_t c) {
     return min_h;
 }
 
-int planner_plan_path(
+int planner_plan_safe_path(
     const MazeGrid *grid,
     RobotPose start_pose,
     float turn_penalty,
+    const bool known_cells[MAZE_ROWS][MAZE_COLS],
     MoveCommand out_commands[MAX_PATH_COMMANDS]
 ) {
     if (!grid || !out_commands) return -1;
@@ -132,14 +133,18 @@ int planner_plan_path(
             int8_t nr = (int8_t)(r + ROW_OFFSETS[d]);
             int8_t nc = (int8_t)(c + COL_OFFSETS[d]);
             if (nr >= 0 && nr < MAZE_ROWS && nc >= 0 && nc < MAZE_COLS) {
-                uint16_t next_id = encode_state((uint8_t)nr, (uint8_t)nc, d);
-                float tentative_g = g_score[curr_id] + 1.0f;
-                if (tentative_g < g_score[next_id]) {
-                    g_score[next_id] = tentative_g;
-                    parent_state[next_id] = (int16_t)curr_id;
-                    parent_action[next_id] = (uint8_t)CMD_FORWARD;
-                    float f = tentative_g + heuristic_manhattan((uint8_t)nr, (uint8_t)nc);
-                    heap_push(&heap, next_id, f);
+                if (known_cells != NULL && !known_cells[nr][nc] && !maze_is_goal((uint8_t)nr, (uint8_t)nc)) {
+                    /* Skip unverified cells when safety constraint is active */
+                } else {
+                    uint16_t next_id = encode_state((uint8_t)nr, (uint8_t)nc, d);
+                    float tentative_g = g_score[curr_id] + 1.0f;
+                    if (tentative_g < g_score[next_id]) {
+                        g_score[next_id] = tentative_g;
+                        parent_state[next_id] = (int16_t)curr_id;
+                        parent_action[next_id] = (uint8_t)CMD_FORWARD;
+                        float f = tentative_g + heuristic_manhattan((uint8_t)nr, (uint8_t)nc);
+                        heap_push(&heap, next_id, f);
+                    }
                 }
             }
         }
@@ -207,4 +212,13 @@ int planner_plan_path(
     }
 
     return count;
+}
+
+int planner_plan_path(
+    const MazeGrid *grid,
+    RobotPose start_pose,
+    float turn_penalty,
+    MoveCommand out_commands[MAX_PATH_COMMANDS]
+) {
+    return planner_plan_safe_path(grid, start_pose, turn_penalty, NULL, out_commands);
 }

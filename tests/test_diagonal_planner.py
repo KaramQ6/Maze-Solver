@@ -64,3 +64,25 @@ def test_evaluate_smoothed_trajectory_time() -> None:
 
     assert duration > 0.0
     assert duration < 5.0
+
+
+def test_smooth_path_to_diagonals_chains_multiple_zigzags() -> None:
+    """Verify that multiple consecutive zigzags are chained into a single multi-cell sprint."""
+    grid = MazeGrid(10, 10)
+    start_state = RobotState(Cell(8, 2), Direction.NORTH)
+
+    # 3 consecutive right-left zigzags
+    single_zigzag = [
+        MovementCommand.TURN_RIGHT,
+        MovementCommand.FORWARD,
+        MovementCommand.TURN_LEFT,
+        MovementCommand.FORWARD,
+    ]
+    commands = single_zigzag * 3
+
+    segments = smooth_path_to_diagonals(commands, grid, start_state)
+
+    # Must contain exactly ONE continuous DIAGONAL_SPRINT with units_count=3
+    diagonal_sprints = [s for s in segments if s.segment_type == MotionSegmentType.DIAGONAL_SPRINT]
+    assert len(diagonal_sprints) == 1
+    assert diagonal_sprints[0].units_count == 3
