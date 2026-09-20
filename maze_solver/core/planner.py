@@ -27,11 +27,16 @@ def plan_turn_weighted_path(
     start_state: RobotState,
     goals: tuple[tuple[int, int], ...] = MazeConfig.GOAL_CELLS,
     turn_penalty: float = MazeConfig.TURN_PENALTY,
+    known_cells: set[Cell] | None = None,
 ) -> list[MovementCommand]:
     """Calculate the optimal turn-weighted sequence of motion commands to reach destination.
 
     Considers physical turning costs to select the fastest traversable route
     rather than simply the route with the fewest cells.
+
+    If known_cells is specified, the path is strictly constrained to cells
+    that have been visited and verified by onboard sensors (preventing
+    optimistic traversal through unobserved, potentially blocked walls).
     """
     goal_set = {(r, c) for r, c in goals}
 
@@ -66,24 +71,33 @@ def plan_turn_weighted_path(
         # 1. Option: Move FORWARD (if edge is passable)
         if grid.is_passable(curr_cell, curr_heading):
             next_cell = curr_cell.neighbor(curr_heading)
-            next_state = RobotState(next_cell, curr_heading)
-            move_cost = 1.0  # Base unit forward traversal cost
-            new_g = g_cost + move_cost
 
-            if new_g < g_scores.get(next_state, float("inf")):
-                g_scores[next_state] = new_g
-                f_score = new_g + _heuristic_manhattan(next_cell, goals)
-                counter += 1
-                heapq.heappush(
-                    open_set,
-                    (
-                        f_score,
-                        new_g,
-                        counter,
-                        next_state,
-                        [*commands, MovementCommand.FORWARD],
-                    ),
-                )
+            # If constrained to known cells, reject stepping into unvisited territory
+            if (
+                known_cells is not None
+                and next_cell not in known_cells
+                and (next_cell.row, next_cell.col) not in goal_set
+            ):
+                pass
+            else:
+                next_state = RobotState(next_cell, curr_heading)
+                move_cost = 1.0  # Base unit forward traversal cost
+                new_g = g_cost + move_cost
+
+                if new_g < g_scores.get(next_state, float("inf")):
+                    g_scores[next_state] = new_g
+                    f_score = new_g + _heuristic_manhattan(next_cell, goals)
+                    counter += 1
+                    heapq.heappush(
+                        open_set,
+                        (
+                            f_score,
+                            new_g,
+                            counter,
+                            next_state,
+                            [*commands, MovementCommand.FORWARD],
+                        ),
+                    )
 
         # 2. Option: TURN_LEFT (in place)
         left_state = RobotState(curr_cell, curr_heading.turn_left())

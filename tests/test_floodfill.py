@@ -100,3 +100,87 @@ def test_floodfill_unvisited_preference_breaks_oscillation() -> None:
     # West is to the left of North, so robot should turn left towards the unvisited cell
     assert cmd == MovementCommand.TURN_LEFT
     assert next_state.heading == Direction.WEST
+
+
+def test_incremental_update_matches_full_recompute() -> None:
+    """Verify incremental update produces the same distances as full BFS recomputation."""
+    from maze_solver.core.floodfill import incremental_update
+
+    grid = MazeGrid()
+    start = Cell(9, 0)
+    grid.initialize_competition_defaults(start_corner=start, initial_heading=Direction.NORTH)
+
+    # Compute initial distance map
+    dist_map = compute_distance_map(grid, MazeConfig.GOAL_CELLS)
+
+    # Add a wall and update incrementally
+    wall_cell = Cell(7, 3)
+    grid.set_wall(wall_cell, Direction.NORTH, present=True)
+    incremental_update(grid, dist_map, wall_cell, MazeConfig.GOAL_CELLS)
+
+    # Recompute from scratch for comparison
+    expected = compute_distance_map(grid, MazeConfig.GOAL_CELLS)
+
+    for r in range(grid.rows):
+        for c in range(grid.cols):
+            assert dist_map[r][c] == expected[r][c], (
+                f"Mismatch at ({r},{c}): incremental={dist_map[r][c]}, expected={expected[r][c]}"
+            )
+
+
+def test_incremental_update_no_change_without_wall() -> None:
+    """Verify incremental update is a no-op when called without an actual wall change."""
+    from maze_solver.core.floodfill import incremental_update
+
+    grid = MazeGrid()
+    start = Cell(9, 0)
+    grid.initialize_competition_defaults(start_corner=start, initial_heading=Direction.NORTH)
+
+    dist_map = compute_distance_map(grid, MazeConfig.GOAL_CELLS)
+    original = [row[:] for row in dist_map]
+
+    # Call incremental update on a cell with no wall change
+    incremental_update(grid, dist_map, Cell(5, 5), MazeConfig.GOAL_CELLS)
+
+    for r in range(grid.rows):
+        for c in range(grid.cols):
+            assert dist_map[r][c] == original[r][c]
+
+
+def test_fill_dead_ends_marks_dead_end_cells() -> None:
+    """Verify dead-end cells (1 or 0 passable neighbors) are marked as unreachable."""
+    from maze_solver.core.floodfill import fill_dead_ends
+
+    grid = MazeGrid(4, 4)
+    goals = ((1, 1),)
+
+    # Create a dead-end corridor: (0,0) -> (0,1) -> (0,2) with (0,2) as dead-end
+    # Wall off (0,2) on N, E, S — only exit is W to (0,1)
+    grid.set_wall(Cell(0, 2), Direction.NORTH, True)
+    grid.set_wall(Cell(0, 2), Direction.EAST, True)
+    grid.set_wall(Cell(0, 2), Direction.SOUTH, True)
+
+    dist_map = compute_distance_map(grid, goals)
+    filled = fill_dead_ends(grid, dist_map, goals)
+
+    assert filled >= 1
+    assert dist_map[0][2] == MazeConfig.UNREACHABLE_DISTANCE
+
+
+def test_fill_dead_ends_does_not_fill_goals() -> None:
+    """Verify goal cells are never marked as dead-ends even if they have only 1 neighbor."""
+    from maze_solver.core.floodfill import fill_dead_ends
+
+    grid = MazeGrid(4, 4)
+    goals = ((0, 0),)
+
+    # Wall off (0,0) on all sides except S
+    grid.set_wall(Cell(0, 0), Direction.NORTH, True)
+    grid.set_wall(Cell(0, 0), Direction.WEST, True)
+    grid.set_wall(Cell(0, 0), Direction.EAST, True)
+
+    dist_map = compute_distance_map(grid, goals)
+    fill_dead_ends(grid, dist_map, goals)
+
+    # Goal must remain at distance 0
+    assert dist_map[0][0] == 0

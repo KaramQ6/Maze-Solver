@@ -47,6 +47,143 @@ def compute_distance_map(
     return distance
 
 
+def incremental_update(
+    grid: MazeGrid,
+    distance_map: list[list[int]],
+    changed_cell: Cell,
+    goals: tuple[tuple[int, int], ...] = MazeConfig.GOAL_CELLS,
+) -> None:
+    """Update distance_map in-place after a wall change near changed_cell.
+
+    Instead of recomputing the entire BFS (O(N^2)), this propagates only from
+    cells whose distances became invalid due to a newly discovered wall.
+    Amortized cost: O(K) where K << N^2 is the number of affected cells.
+    """
+    goal_set = {(r, c) for r, c in goals}
+    rows, cols = grid.rows, grid.cols
+    # ponytail: uses a simple FIFO re-flood from invalidated cells.
+    # Could upgrade to Bellman-Ford stack for even fewer updates.
+
+    # Phase 1: Invalidate cells whose current distance relies on a now-blocked path
+    invalidated: deque[Cell] = deque()
+
+    # Check if changed_cell's distance is still consistent
+    if (changed_cell.row, changed_cell.col) in goal_set:
+        return  # Goal cells always have distance 0
+
+    _check_and_invalidate(grid, distance_map, changed_cell, goal_set, invalidated)
+
+    # Also check all neighbors of changed_cell (their paths may have gone through it)
+    for neighbor, _ in grid.passable_neighbors(changed_cell):
+        _check_and_invalidate(grid, distance_map, neighbor, goal_set, invalidated)
+
+    # Phase 2: Re-flood from valid neighbors of invalidated cells
+    repair_queue: deque[Cell] = deque()
+    for cell in invalidated:
+        for neighbor, _ in grid.passable_neighbors(cell):
+            if distance_map[neighbor.row][neighbor.col] < MazeConfig.UNREACHABLE_DISTANCE:
+                repair_queue.append(neighbor)
+
+    # Also seed from goals in case invalidation disconnected some paths
+    for r, c in goals:
+        if 0 <= r < rows and 0 <= c < cols:
+            repair_queue.append(Cell(r, c))
+
+    while repair_queue:
+        current = repair_queue.popleft()
+        current_dist = distance_map[current.row][current.col]
+
+        for neighbor, _ in grid.passable_neighbors(current):
+            if distance_map[neighbor.row][neighbor.col] > current_dist + 1:
+                distance_map[neighbor.row][neighbor.col] = current_dist + 1
+                repair_queue.append(neighbor)
+
+
+def _check_and_invalidate(
+    grid: MazeGrid,
+    distance_map: list[list[int]],
+    cell: Cell,
+    goal_set: set[tuple[int, int]],
+    invalidated: deque[Cell],
+) -> None:
+    """Check if a cell's distance is still valid; if not, invalidate it and propagate."""
+    if (cell.row, cell.col) in goal_set:
+        return
+
+    current_dist = distance_map[cell.row][cell.col]
+    if current_dist >= MazeConfig.UNREACHABLE_DISTANCE:
+        return
+
+    passable = grid.passable_neighbors(cell)
+    if not passable:
+        # No exits — cell is now unreachable
+        distance_map[cell.row][cell.col] = MazeConfig.UNREACHABLE_DISTANCE
+        invalidated.append(cell)
+        return
+
+    # A cell's distance should be min(neighbor distances) + 1
+    min_neighbor = min(distance_map[n.row][n.col] for n, _ in passable)
+    if current_dist != min_neighbor + 1:
+        distance_map[cell.row][cell.col] = MazeConfig.UNREACHABLE_DISTANCE
+        invalidated.append(cell)
+        # Propagate: neighbors that depended on this cell may also be invalid
+        for neighbor, _ in passable:
+            n_dist = distance_map[neighbor.row][neighbor.col]
+            if n_dist == current_dist + 1:
+                _check_and_invalidate(grid, distance_map, neighbor, goal_set, invalidated)
+
+
+def fill_dead_ends(
+    grid: MazeGrid,
+    distance_map: list[list[int]],
+    goals: tuple[tuple[int, int], ...] = MazeConfig.GOAL_CELLS,
+) -> int:
+    """Mark dead-end cells as unreachable and propagate through dead-end chains.
+
+    A dead-end is a cell with only 1 passable neighbor (excluding goal cells).
+    Returns the number of cells filled.
+    """
+    goal_set = {(r, c) for r, c in goals}
+    filled = 0
+    stack: list[Cell] = []
+
+    # Find initial dead-ends
+    for r in range(grid.rows):
+        for c in range(grid.cols):
+            if (r, c) in goal_set:
+                continue
+            cell = Cell(r, c)
+            passable = grid.passable_neighbors(cell)
+            if len(passable) <= 1 and distance_map[r][c] < MazeConfig.UNREACHABLE_DISTANCE:
+                distance_map[r][c] = MazeConfig.UNREACHABLE_DISTANCE
+                filled += 1
+                if passable:
+                    stack.append(passable[0][0])
+
+    # Propagate: if filling a dead-end makes its neighbor a dead-end too
+    while stack:
+        cell = stack.pop()
+        if (cell.row, cell.col) in goal_set:
+            continue
+        if distance_map[cell.row][cell.col] >= MazeConfig.UNREACHABLE_DISTANCE:
+            continue
+
+        # Count remaining passable neighbors with valid distances
+        valid_neighbors = [
+            (n, d)
+            for n, d in grid.passable_neighbors(cell)
+            if distance_map[n.row][n.col] < MazeConfig.UNREACHABLE_DISTANCE
+        ]
+
+        if len(valid_neighbors) <= 1:
+            distance_map[cell.row][cell.col] = MazeConfig.UNREACHABLE_DISTANCE
+            filled += 1
+            for n, _ in valid_neighbors:
+                stack.append(n)
+
+    return filled
+
+
 def get_next_search_move(
     state: RobotState,
     grid: MazeGrid,

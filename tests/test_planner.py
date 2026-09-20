@@ -48,3 +48,41 @@ def test_planner_penalizes_turns() -> None:
     commands = plan_turn_weighted_path(grid, start, goals=goal, turn_penalty=2.0)
     # Planner must choose straight path: [FORWARD, FORWARD]
     assert commands == [MovementCommand.FORWARD, MovementCommand.FORWARD]
+
+
+def test_planner_constrained_to_known_cells() -> None:
+    """Verify planner with known_cells avoids unvisited shortcut corridors.
+
+    Scenario:
+    - Path A (visited): (0,0) -> (1,0) -> (2,0) -> (2,1) -> (2,2)
+    - Path B (unvisited direct shortcut): (0,0) -> (0,1) -> (0,2) -> (1,2) -> (2,2)
+    Without known_cells: planner may pick Path B if costs are equal or lower.
+    With known_cells: planner MUST strictly take Path A because Path B has unvisited cells.
+    """
+    grid = MazeGrid(5, 5)
+    start = RobotState(Cell(0, 0), Direction.SOUTH)
+    goal = ((2, 2),)
+
+    visited = {Cell(0, 0), Cell(1, 0), Cell(2, 0), Cell(2, 1), Cell(2, 2)}
+
+    # Constrained planning
+    commands = plan_turn_weighted_path(grid, start, goals=goal, known_cells=visited)
+
+    # Reconstruct trajectory
+    curr = start
+    trajectory = [curr.cell]
+    for cmd in commands:
+        if cmd == MovementCommand.FORWARD:
+            curr = RobotState(curr.cell.neighbor(curr.heading), curr.heading)
+            trajectory.append(curr.cell)
+        elif cmd == MovementCommand.TURN_LEFT:
+            curr = RobotState(curr.cell, curr.heading.turn_left())
+        elif cmd == MovementCommand.TURN_RIGHT:
+            curr = RobotState(curr.cell, curr.heading.turn_right())
+        elif cmd == MovementCommand.TURN_AROUND:
+            curr = RobotState(curr.cell, curr.heading.turn_around())
+
+    # Every cell in trajectory must be in visited
+    for c in trajectory:
+        assert c in visited, f"Cell {c} in trajectory was NOT in visited_cells!"
+    assert trajectory[-1] == Cell(2, 2)

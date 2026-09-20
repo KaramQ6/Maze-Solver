@@ -7,7 +7,12 @@ import sys
 from collections import defaultdict
 from typing import Any
 
-from maze_solver.core.floodfill import compute_distance_map, get_next_search_move
+from maze_solver.core.floodfill import (
+    compute_distance_map,
+    fill_dead_ends,
+    get_next_search_move,
+    incremental_update,
+)
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import plan_turn_weighted_path
 from maze_solver.core.types import (
@@ -141,6 +146,9 @@ def run_mms_solver() -> None:
         Direction.WEST: "w",
     }
 
+    # Initial distance map (computed once, then incrementally updated)
+    dist_map = compute_distance_map(grid, goals=goals)
+
     # -------------------------------------------------------------
     # PHASE 1: EXPLORATION / FLOODFILL RUN TO ISLAND GOAL
     # -------------------------------------------------------------
@@ -155,11 +163,17 @@ def run_mms_solver() -> None:
         wr = MMS_API.wall_right()
         wb = MMS_API.wall_back()
 
-        # Update local grid model
+        # Update local grid model (track whether new walls were found)
         sensations = WallSensations(front=wf, left=wl, right=wr)
-        grid.update_from_sensations(state, sensations)
+        walls_changed = grid.update_from_sensations(state, sensations)
         if wb:
-            grid.set_wall(state.cell, state.heading.opposite(), True)
+            if grid.set_wall(state.cell, state.heading.opposite(), True):
+                walls_changed = True
+
+        # Incrementally patch distance map when topology changes
+        if walls_changed:
+            incremental_update(grid, dist_map, state.cell, goals)
+            fill_dead_ends(grid, dist_map, goals)
 
         # Mirror walls to MMS visualizer
         if wf:
@@ -182,8 +196,7 @@ def run_mms_solver() -> None:
                 MMS_API.set_color(gc, height - 1 - gr, "Y")
             break
 
-        # Compute distance map
-        dist_map = compute_distance_map(grid, goals=goals)
+        # Display current distance on cell
         d_val = dist_map[r][c]
         if d_val < 9000:
             MMS_API.set_text(x, y, str(d_val))
@@ -211,23 +224,133 @@ def run_mms_solver() -> None:
             break
 
     # -------------------------------------------------------------
-    # PHASE 2: OPTIMAL TURN-WEIGHTED SPEED RUN HIGHLIGHTING
+    # PHASE 1.5: RETURN TO START FOR SPEED RUN
     # -------------------------------------------------------------
-    MMS_API.log("Calculating optimal turn-weighted speed run path...")
-    start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
-    speed_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
-    MMS_API.log(f"Speed run plan: {len(speed_cmds)} actions.")
+    MMS_API.log("Phase 1.5: Returning to start for speed run...")
+    start_cell = (height - 1, 0)
+    return_goals: tuple[tuple[int, int], ...] = (start_cell,)
+    return_dist_map = compute_distance_map(grid, goals=return_goals)
+    return_steps = 0
+    max_return_steps = width * height * 4
 
-    # Highlight optimal path in blue
-    curr_sim = start_state
+    while return_steps < max_return_steps:
+        return_steps += 1
+        r, c = state.cell.row, state.cell.col
+        x, y = c, height - 1 - r
+
+        # Read sensors with synchronized responses
+        wf = MMS_API.wall_front()
+        wl = MMS_API.wall_left()
+        wr = MMS_API.wall_right()
+        wb = MMS_API.wall_back()
+
+        # Update local grid model (continue exploring on the way back)
+        sensations = WallSensations(front=wf, left=wl, right=wr)
+        walls_changed = grid.update_from_sensations(state, sensations)
+        if wb:
+            if grid.set_wall(state.cell, state.heading.opposite(), True):
+                walls_changed = True
+
+        # Incrementally patch return distance map when topology changes
+        if walls_changed:
+            incremental_update(grid, return_dist_map, state.cell, return_goals)
+            fill_dead_ends(grid, return_dist_map, return_goals)
+
+        # Mirror walls to MMS visualizer
+        if wf:
+            MMS_API.set_wall(x, y, dir_char_map[state.heading])
+        if wl:
+            MMS_API.set_wall(x, y, dir_char_map[state.heading.turn_left()])
+        if wr:
+            MMS_API.set_wall(x, y, dir_char_map[state.heading.turn_right()])
+        if wb:
+            MMS_API.set_wall(x, y, dir_char_map[state.heading.opposite()])
+
+        # Color return path orange
+        MMS_API.set_color(x, y, "o")
+        visit_counts[state.cell] += 1
+
+        # Check if we reached start
+        if (state.cell.row, state.cell.col) == start_cell:
+            MMS_API.log(f"Returned to start in {return_steps} steps.")
+            break
+
+        # Next move toward start
+        cmd, next_state = get_next_search_move(
+            state, grid, return_dist_map, goals=return_goals, visited_cells=visit_counts
+        )
+
+        # Dispatch motion
+        if cmd == MovementCommand.FORWARD:
+            MMS_API.move_forward()
+            state = next_state
+        elif cmd == MovementCommand.TURN_LEFT:
+            MMS_API.turn_left()
+            state = next_state
+        elif cmd == MovementCommand.TURN_RIGHT:
+            MMS_API.turn_right()
+            state = next_state
+        elif cmd == MovementCommand.TURN_AROUND:
+            MMS_API.turn_right()
+            MMS_API.turn_right()
+            state = next_state
+        elif cmd == MovementCommand.HALT:
+            break
+
+    # -------------------------------------------------------------
+    # PHASE 2: OPTIMAL TURN-WEIGHTED SPEED RUN EXECUTION
+    # -------------------------------------------------------------
+    # Align robot to face NORTH at start position
+    while state.heading != Direction.NORTH:
+        MMS_API.turn_right()
+        state = RobotState(state.cell, state.heading.turn_right())
+
+    start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
+    visited = set(visit_counts.keys())
+
+    # 1. Plan confirmed safe path (strictly through visited cells)
+    safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
+    optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
+
+    if safe_cmds:
+        speed_cmds = safe_cmds
+        MMS_API.log(f"Phase 2: Confirmed safe path found ({len(speed_cmds)} actions).")
+        if len(optimistic_cmds) < len(safe_cmds):
+            MMS_API.log(
+                f"Notice: Shorter unverified path ({len(optimistic_cmds)} actions) exists. "
+                f"Running confirmed safe path ({len(safe_cmds)} actions) to avoid collisions."
+            )
+    else:
+        MMS_API.log(
+            "Phase 2 WARNING: No verified path through visited cells! "
+            "Falling back to optimistic path..."
+        )
+        speed_cmds = optimistic_cmds
+
+    MMS_API.log(f"Phase 2: Executing speed run ({len(speed_cmds)} actions)...")
+
+    # Execute speed run through the real MMS API
+    state = start_state
     for cmd in speed_cmds:
         if cmd == MovementCommand.FORWARD:
-            curr_sim = RobotState(curr_sim.cell.neighbor(curr_sim.heading), curr_sim.heading)
-            MMS_API.set_color(curr_sim.cell.col, height - 1 - curr_sim.cell.row, "B")
+            MMS_API.move_forward()
+            state = RobotState(state.cell.neighbor(state.heading), state.heading)
+            sx, sy = state.cell.col, height - 1 - state.cell.row
+            MMS_API.set_color(sx, sy, "B")
         elif cmd == MovementCommand.TURN_LEFT:
-            curr_sim = RobotState(curr_sim.cell, curr_sim.heading.turn_left())
+            MMS_API.turn_left()
+            state = RobotState(state.cell, state.heading.turn_left())
         elif cmd == MovementCommand.TURN_RIGHT:
-            curr_sim = RobotState(curr_sim.cell, curr_sim.heading.turn_right())
+            MMS_API.turn_right()
+            state = RobotState(state.cell, state.heading.turn_right())
+        elif cmd == MovementCommand.TURN_AROUND:
+            MMS_API.turn_right()
+            MMS_API.turn_right()
+            state = RobotState(state.cell, state.heading.opposite())
+
+    # Check if speed run reached the goal
+    if (state.cell.row, state.cell.col) in goals:
+        MMS_API.log(f"Speed run SUCCESS! Reached goal in {len(speed_cmds)} actions.")
 
 
 if __name__ == "__main__":
