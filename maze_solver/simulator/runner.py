@@ -151,10 +151,34 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="Random seed for maze generation")
     parser.add_argument("--render", action="store_true", help="Render step-by-step ASCII view")
     parser.add_argument("--max-steps", type=int, default=500, help="Maximum simulation steps")
+    parser.add_argument(
+        "--match", action="store_true", help="Run full 480s match with Phase D repeats"
+    )
     args = parser.parse_args()
 
     print(f"Generating MMRC26 Island-Goal maze (seed={args.seed})...")
     ground_truth = generate_island_maze(seed=args.seed)
+
+    if args.match:
+        from maze_solver.simulator.match_simulator import MatchSimulator
+
+        print("Executing Full 8-Minute Tournament Match (Phases A, B, C, D)...")
+        mgr = MatchSimulator(ground_truth=ground_truth)
+        match_result = mgr.run_match()
+
+        print("\n=== MMRC26 Match Tournament Results ===")
+        print(f"Total Successful Runs : {match_result.total_successful_runs}")
+        print(f"Official Time (Best)  : {match_result.official_time:.2f}s")
+        print(f"Final Score           : {match_result.final_score:.2f}")
+        print(f"Match Time Consumed   : {match_result.total_elapsed_seconds:.1f}s / 480.0s")
+        print("\nRun Breakdown:")
+        for r in match_result.runs:
+            status = "SUCCESS" if r.success else "FAILED"
+            print(
+                f"  Run #{r.run_number:02d}: {r.phase.value:<20} | "
+                f"Time: {r.run_time:5.2f}s | {status}"
+            )
+        return
 
     print("Executing Search Run (Layer 1 Base Flood Fill)...")
     result = run_search(
