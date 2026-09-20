@@ -52,6 +52,7 @@ tools/*
 !tools/register_mazes_in_mms.py
 !tools/mms
 !tools/mms/launch_mms.bat
+tools/mms/mms/
 mazes/
 mazes_num/
 
