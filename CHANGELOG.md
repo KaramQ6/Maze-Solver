@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Physics & Kinematics Engine (`kinematics.py`) modeling real F1 dynamics: trapezoidal acceleration profiles, cornering speed limits ($a_{\text{lat}} = v^2/R$), and vacuum suction downforce ($>3\text{ G}$ lateral grip).
+- Return-Trip Exploration Engine (`return_explorer.py`) enabling autonomous secondary mapping from center back to start square to discover long straight corridors.
+- Diagonal Traversal & Turn Smoothing Planner (`diagonal_planner.py`) cutting $45^\circ$ across open lattice posts ("Fosbury Flop"), reducing path distance by 29.3% and eliminating stop-and-pivot braking.
+- CLI flags `--suction` and `--return-trip` in `runner.py` for tournament simulation comparisons.
 - Layer 2 Turn-Weighted State-Space Path Planner (`planner.py`) implementing A* over `(Cell, Direction)` states with admissible Manhattan heuristic and physical turn penalties.
 - Pure tournament strategy & scoring module (`strategy.py`) implementing the official MMRC26 scoring formula `(Total Runs / Official Time) * 1000`.
 - Match simulation engine (`match_simulator.py`) managing the continuous 480-second window across Phase A (Search), Phase B (Decision), Phase C (Speed Run), and Phase D (Score Maximizing Repeats).

@@ -1,6 +1,7 @@
 """Simulation environment orchestrating the full 480-second MMRC26 tournament match."""
 
 from maze_solver.config.settings import MazeConfig
+from maze_solver.core.kinematics import KinematicProfile
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import plan_turn_weighted_path
 from maze_solver.core.strategy import (
@@ -31,6 +32,8 @@ class MatchSimulator:
         reposition_time_seconds: float = 5.0,
         speed_cell_time: float = 0.12,
         turn_penalty: float = MazeConfig.TURN_PENALTY,
+        enable_return_trip: bool = False,
+        kinematic_profile: KinematicProfile | None = None,
     ) -> None:
         if start_cell is None:
             start_cell = Cell(9, 0)
@@ -41,6 +44,8 @@ class MatchSimulator:
         self.reposition_time_seconds = reposition_time_seconds
         self.speed_cell_time = speed_cell_time
         self.turn_penalty = turn_penalty
+        self.enable_return_trip = enable_return_trip
+        self.kinematic_profile = kinematic_profile
 
         self.discovered_grid = MazeGrid(ground_truth.rows, ground_truth.cols)
         self.discovered_grid.initialize_competition_defaults(start_cell, initial_heading)
@@ -54,18 +59,26 @@ class MatchSimulator:
         self, commands: list[MovementCommand], mouse: VirtualMouse
     ) -> tuple[bool, float]:
         """Execute a planned command sequence and compute execution time."""
-        cell_moves = 0
-        turn_moves = 0
-        for cmd in commands:
-            if cmd == MovementCommand.FORWARD:
-                cell_moves += 1
-            else:
-                turn_moves += 1
+        from maze_solver.core.diagonal_planner import (
+            evaluate_smoothed_trajectory_time,
+            smooth_path_to_diagonals,
+        )
 
+        # Execute physical movement
+        for cmd in commands:
             ok = mouse.apply_command(cmd, self.ground_truth)
             if not ok:
                 return False, 0.0
 
+        # If kinematic profile provided, compute continuous F1 dynamics with smoothing
+        if self.kinematic_profile is not None:
+            start_st = RobotState(self.start_cell, self.initial_heading)
+            segments = smooth_path_to_diagonals(commands, self.discovered_grid, start_st)
+            run_time = evaluate_smoothed_trajectory_time(segments, self.kinematic_profile)
+            return True, run_time
+
+        cell_moves = sum(1 for c in commands if c == MovementCommand.FORWARD)
+        turn_moves = len(commands) - cell_moves
         run_time = (cell_moves * self.speed_cell_time) + (
             turn_moves * self.speed_cell_time * self.turn_penalty
         )
@@ -123,8 +136,21 @@ class MatchSimulator:
                 runs=self.runs,
             )
 
-        # Reposition robot to start corner
-        self.elapsed_time += self.reposition_time_seconds
+        # Transition to start: either autonomous return-trip mapping or manual reposition
+        if self.enable_return_trip and search_sim.path:
+            from maze_solver.core.return_explorer import run_return_trip
+
+            last_pose = search_sim.path[-1]
+            return_mouse = VirtualMouse(last_pose.cell, last_pose.heading)
+            ret_ok, ret_time, _ = run_return_trip(
+                mouse=return_mouse,
+                ground_truth=self.ground_truth,
+                discovered_grid=self.discovered_grid,
+                target_cell=self.start_cell,
+            )
+            self.elapsed_time += ret_time
+        else:
+            self.elapsed_time += self.reposition_time_seconds
 
         # ==========================================================
         # Phase B: Decision & Turn-Weighted Path Planning

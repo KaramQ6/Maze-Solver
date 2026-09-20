@@ -54,3 +54,27 @@ def test_full_match_run_execution() -> None:
     speed_time = result.runs[1].run_time
     assert speed_time < search_time
     assert result.official_time <= speed_time
+
+
+def test_full_match_with_kinematics_and_return_trip() -> None:
+    """Verify match simulation with F1 kinematics, suction downforce, and return-trip mapping."""
+    from maze_solver.core.kinematics import KinematicProfile
+
+    maze = generate_island_maze(seed=42)
+    profile = KinematicProfile(suction_multiplier=3.0, max_velocity_mps=4.0)
+
+    sim = MatchSimulator(
+        ground_truth=maze,
+        start_cell=Cell(9, 0),
+        initial_heading=Direction.NORTH,
+        match_budget_seconds=480.0,
+        reposition_time_seconds=3.0,
+        enable_return_trip=True,
+        kinematic_profile=profile,
+    )
+
+    result = sim.run_match()
+    assert result.total_successful_runs >= 2
+    assert result.official_time > 0.0
+    assert result.final_score > 0.0
+    assert result.total_elapsed_seconds <= 480.0

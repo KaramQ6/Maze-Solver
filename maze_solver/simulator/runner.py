@@ -154,16 +154,36 @@ def main() -> None:
     parser.add_argument(
         "--match", action="store_true", help="Run full 480s match with Phase D repeats"
     )
+    parser.add_argument(
+        "--suction", action="store_true", help="Enable vacuum suction fan & F1 kinematics"
+    )
+    parser.add_argument(
+        "--return-trip", action="store_true", help="Enable autonomous return-trip mapping"
+    )
     args = parser.parse_args()
 
     print(f"Generating MMRC26 Island-Goal maze (seed={args.seed})...")
     ground_truth = generate_island_maze(seed=args.seed)
 
     if args.match:
+        from maze_solver.core.kinematics import KinematicProfile
         from maze_solver.simulator.match_simulator import MatchSimulator
 
+        profile = None
+        if args.suction:
+            print("Engaging Vacuum Suction Fan (3.0x downforce, max 4.5 m/s, 15 m/s^2)...")
+            profile = KinematicProfile(
+                suction_multiplier=3.0,
+                max_velocity_mps=4.5,
+                max_accel_mps2=15.0,
+            )
+
         print("Executing Full 8-Minute Tournament Match (Phases A, B, C, D)...")
-        mgr = MatchSimulator(ground_truth=ground_truth)
+        mgr = MatchSimulator(
+            ground_truth=ground_truth,
+            enable_return_trip=args.return_trip,
+            kinematic_profile=profile,
+        )
         match_result = mgr.run_match()
 
         print("\n=== MMRC26 Match Tournament Results ===")
