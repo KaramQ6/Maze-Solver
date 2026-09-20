@@ -1,0 +1,3 @@
+@echo off
+echo Starting Mackorone Micromouse Simulator (MMS)...
+start "" "%~dp0tools\mms\mms\mms.exe"
