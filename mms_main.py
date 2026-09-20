@@ -1,7 +1,6 @@
 """MMS (Micromouse Simulator by mackorone) Bridge Adapter for MMRC26 Maze Solver.
 
-Allows our MMRC26 maze-solving engine and FloodFill / A* planner to run directly
-inside the official Mackorone Micromouse Simulator (MMS).
+Implements the official MMS protocol with strict stdin/stdout synchronization.
 """
 
 import sys
@@ -20,14 +19,14 @@ from maze_solver.core.types import (
 
 
 class MMS_API:
-    """Interface to communicate with Mackorone Micromouse Simulator over stdin/stdout."""
+    """Official MMS API interface with strict command-response synchronization."""
 
     @staticmethod
-    def _command(args: list[str], return_type: Any = None) -> Any:
+    def _command(args: list[Any], return_type: Any = None) -> Any:
         line = " ".join([str(x) for x in args]) + "\n"
         sys.stdout.write(line)
         sys.stdout.flush()
-        if return_type:
+        if return_type is not None:
             response = sys.stdin.readline().strip()
             if return_type is bool:
                 return response == "true"
@@ -36,11 +35,11 @@ class MMS_API:
 
     @classmethod
     def maze_width(cls) -> int:
-        return int(cls._command(["mazeWidth"], int) or 10)
+        return int(cls._command(["mazeWidth"], int) or 16)
 
     @classmethod
     def maze_height(cls) -> int:
-        return int(cls._command(["mazeHeight"], int) or 10)
+        return int(cls._command(["mazeHeight"], int) or 16)
 
     @classmethod
     def wall_front(cls) -> bool:
@@ -55,28 +54,35 @@ class MMS_API:
         return bool(cls._command(["wallLeft"], bool))
 
     @classmethod
+    def wall_back(cls) -> bool:
+        return bool(cls._command(["wallBack"], bool))
+
+    @classmethod
     def move_forward(cls) -> None:
-        cls._command(["moveForward"])
+        # MMS replies with ack / crash
+        cls._command(["moveForward"], str)
 
     @classmethod
     def turn_right(cls) -> None:
-        cls._command(["turnRight"])
+        # MMS replies with ack
+        cls._command(["turnRight"], str)
 
     @classmethod
     def turn_left(cls) -> None:
-        cls._command(["turnLeft"])
+        # MMS replies with ack
+        cls._command(["turnLeft"], str)
 
     @classmethod
     def set_wall(cls, x: int, y: int, direction_char: str) -> None:
-        cls._command(["setWall", str(x), str(y), direction_char])
+        cls._command(["setWall", x, y, direction_char])
 
     @classmethod
     def set_color(cls, x: int, y: int, color_char: str) -> None:
-        cls._command(["setColor", str(x), str(y), color_char])
+        cls._command(["setColor", x, y, color_char])
 
     @classmethod
     def set_text(cls, x: int, y: int, text: str) -> None:
-        cls._command(["setText", str(x), str(y), text])
+        cls._command(["setText", x, y, text])
 
     @classmethod
     def log(cls, message: str) -> None:
@@ -90,18 +96,25 @@ def run_mms_solver() -> None:
     height = MMS_API.maze_height()
     MMS_API.log(f"Starting MMRC26 Solver in MMS ({width}x{height})")
 
-    # MMRC26 uses a 10x10 grid with bottom-left as start (9, 0 in row/col representation)
     grid = MazeGrid(rows=height, cols=width)
 
-    # Robot starts at bottom-left corner: (x=0, y=0) in MMS -> (row=height-1, col=0)
+    # 1. Enclose outer perimeter boundaries
+    for r in range(height):
+        grid.vertical_walls[r][0] = True
+        grid.vertical_walls[r][width] = True
+    for c in range(width):
+        grid.horizontal_walls[0][c] = True
+        grid.horizontal_walls[height][c] = True
+
+    # 2. Robot starts at bottom-left corner: (x=0, y=0) in MMS -> (row=height-1, col=0)
     current_cell = Cell(row=height - 1, col=0)
     current_heading = Direction.NORTH
     state = RobotState(current_cell, current_heading)
 
     # Mark start cell
-    MMS_API.set_color(0, 0, "c")  # Cyan
+    MMS_API.set_color(0, 0, "c")
 
-    # Goal definition: center 2x2 cells
+    # 3. Center goal definition (2x2 center)
     center_row_low = (height // 2) - 1
     center_col_low = (width // 2) - 1
     goals = (
@@ -111,14 +124,20 @@ def run_mms_solver() -> None:
         (center_row_low + 1, center_col_low + 1),
     )
 
-    # Highlight goals in yellow/orange
     for gr, gc in goals:
         gx = gc
         gy = height - 1 - gr
         MMS_API.set_color(gx, gy, "y")
 
     step_count = 0
-    max_steps = width * height * 4
+    max_steps = width * height * 8
+
+    dir_char_map = {
+        Direction.NORTH: "n",
+        Direction.EAST: "e",
+        Direction.SOUTH: "s",
+        Direction.WEST: "w",
+    }
 
     # -------------------------------------------------------------
     # PHASE 1: EXPLORATION / FLOODFILL RUN TO ISLAND GOAL
@@ -128,46 +147,48 @@ def run_mms_solver() -> None:
         r, c = state.cell.row, state.cell.col
         x, y = c, height - 1 - r
 
-        # 1. Sense walls from MMS
+        # Read sensors with synchronized responses
         wf = MMS_API.wall_front()
         wl = MMS_API.wall_left()
         wr = MMS_API.wall_right()
+        wb = MMS_API.wall_back()
 
+        # Update local grid model
         sensations = WallSensations(front=wf, left=wl, right=wr)
         grid.update_from_sensations(state, sensations)
+        if wb:
+            grid.set_wall(state.cell, state.heading.opposite(), True)
 
         # Mirror walls to MMS visualizer
-        dir_char_map = {
-            Direction.NORTH: "n",
-            Direction.EAST: "e",
-            Direction.SOUTH: "s",
-            Direction.WEST: "w",
-        }
         if wf:
             MMS_API.set_wall(x, y, dir_char_map[state.heading])
         if wl:
             MMS_API.set_wall(x, y, dir_char_map[state.heading.turn_left()])
         if wr:
             MMS_API.set_wall(x, y, dir_char_map[state.heading.turn_right()])
+        if wb:
+            MMS_API.set_wall(x, y, dir_char_map[state.heading.opposite()])
 
-        # Color current path
+        # Trail color
         MMS_API.set_color(x, y, "G")
 
-        # 2. Check if arrived at Island Goal
+        # Check goal arrival
         if (state.cell.row, state.cell.col) in goals:
-            MMS_API.log(f"Island Goal reached in {step_count} steps!")
+            MMS_API.log(f"SUCCESS! Goal reached in {step_count} steps.")
             for gr, gc in goals:
                 MMS_API.set_color(gc, height - 1 - gr, "Y")
             break
 
-        # 3. Compute FloodFill distance map
+        # Compute distance map
         dist_map = compute_distance_map(grid, goals=goals)
-        MMS_API.set_text(x, y, str(dist_map[r][c]))
+        d_val = dist_map[r][c]
+        if d_val < 9000:
+            MMS_API.set_text(x, y, str(d_val))
 
-        # 4. Get next movement command
+        # Next move
         cmd, next_state = get_next_search_move(state, grid, dist_map, goals=goals)
 
-        # 5. Execute command in MMS
+        # Dispatch motion
         if cmd == MovementCommand.FORWARD:
             MMS_API.move_forward()
             state = next_state
@@ -185,14 +206,14 @@ def run_mms_solver() -> None:
             break
 
     # -------------------------------------------------------------
-    # PHASE 2: OPTIMAL SPEED RUN HIGHLIGHTING
+    # PHASE 2: OPTIMAL TURN-WEIGHTED SPEED RUN HIGHLIGHTING
     # -------------------------------------------------------------
-    MMS_API.log("Planning optimal Turn-Weighted Speed Run...")
+    MMS_API.log("Calculating optimal turn-weighted speed run path...")
     start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
     speed_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
-    MMS_API.log(f"Optimal Speed Run commands: {len(speed_cmds)}")
+    MMS_API.log(f"Speed run plan: {len(speed_cmds)} actions.")
 
-    # Color the optimal path in Blue/Cyan
+    # Highlight optimal path in blue
     curr_sim = start_state
     for cmd in speed_cmds:
         if cmd == MovementCommand.FORWARD:
