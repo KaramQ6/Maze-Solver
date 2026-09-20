@@ -243,6 +243,14 @@ def run_mms_solver() -> None:
         elif cmd == MovementCommand.HALT:
             break
 
+    # Guard: Verify that the center goal was actually reached
+    if (state.cell.row, state.cell.col) not in goals:
+        MMS_API.log(
+            "WARNING: Goal was not reached! The center goal in this maze is "
+            "disconnected or sealed by walls."
+        )
+        return
+
     # -------------------------------------------------------------
     # PHASE 1.5: RETURN TO START FOR SPEED RUN
     # -------------------------------------------------------------
@@ -461,6 +469,10 @@ def run_mms_solver() -> None:
     else:
         MMS_API.log("Fallback to optimistic path.")
         speed_cmds = optimistic_cmds
+
+    if not speed_cmds:
+        MMS_API.log("WARNING: No valid path to goal could be computed! Aborting speed run.")
+        return
 
     # Compute and log F1 Vacuum Suction Kinematics & Diagonal Sprints
     segments = smooth_path_to_diagonals(speed_cmds, grid, start_state)
