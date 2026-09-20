@@ -7,9 +7,7 @@ from dataclasses import dataclass, field
 from maze_solver.config.settings import MazeConfig
 from maze_solver.core.floodfill import (
     compute_distance_map,
-    fill_dead_ends,
     get_next_search_move,
-    incremental_update,
 )
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.types import (
@@ -73,9 +71,6 @@ def run_search(
     cell_time = 0.25
     turn_time = cell_time * MazeConfig.TURN_PENALTY
 
-    # Compute distance map once; update incrementally when walls discovered
-    distance_map = compute_distance_map(discovered_grid, MazeConfig.GOAL_CELLS)
-
     for step in range(max_steps):
         current_pose = mouse.pose
         visited_cells.add(current_pose.cell)
@@ -84,14 +79,10 @@ def run_search(
         sensations = mouse.sense_walls(ground_truth)
 
         # B. Update internal map
-        walls_changed = discovered_grid.update_from_sensations(current_pose, sensations)
+        discovered_grid.update_from_sensations(current_pose, sensations)
 
-        # C. Incrementally update distance map only when new walls discovered
-        if walls_changed:
-            incremental_update(
-                discovered_grid, distance_map, current_pose.cell, MazeConfig.GOAL_CELLS
-            )
-            fill_dead_ends(discovered_grid, distance_map, MazeConfig.GOAL_CELLS)
+        # C. Recompute flood fill distance map (exact topological shortest path)
+        distance_map = compute_distance_map(discovered_grid, MazeConfig.GOAL_CELLS)
 
         # D. Check goal arrival
         if (current_pose.cell.row, current_pose.cell.col) in goal_set:

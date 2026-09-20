@@ -9,9 +9,7 @@ from typing import Any
 
 from maze_solver.core.floodfill import (
     compute_distance_map,
-    fill_dead_ends,
     get_next_search_move,
-    incremental_update,
 )
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import plan_turn_weighted_path
@@ -146,9 +144,6 @@ def run_mms_solver() -> None:
         Direction.WEST: "w",
     }
 
-    # Initial distance map (computed once, then incrementally updated)
-    dist_map = compute_distance_map(grid, goals=goals)
-
     # -------------------------------------------------------------
     # PHASE 1: EXPLORATION / FLOODFILL RUN TO ISLAND GOAL
     # -------------------------------------------------------------
@@ -163,17 +158,14 @@ def run_mms_solver() -> None:
         wr = MMS_API.wall_right()
         wb = MMS_API.wall_back()
 
-        # Update local grid model (track whether new walls were found)
+        # Update local grid model
         sensations = WallSensations(front=wf, left=wl, right=wr)
-        walls_changed = grid.update_from_sensations(state, sensations)
+        grid.update_from_sensations(state, sensations)
         if wb:
-            if grid.set_wall(state.cell, state.heading.opposite(), True):
-                walls_changed = True
+            grid.set_wall(state.cell, state.heading.opposite(), True)
 
-        # Incrementally patch distance map when topology changes
-        if walls_changed:
-            incremental_update(grid, dist_map, state.cell, goals)
-            fill_dead_ends(grid, dist_map, goals)
+        # Recompute exact topological distance map on every step (guarantees zero local traps)
+        dist_map = compute_distance_map(grid, goals=goals)
 
         # Mirror walls to MMS visualizer
         if wf:
@@ -229,7 +221,6 @@ def run_mms_solver() -> None:
     MMS_API.log("Phase 1.5: Returning to start for speed run...")
     start_cell = (height - 1, 0)
     return_goals: tuple[tuple[int, int], ...] = (start_cell,)
-    return_dist_map = compute_distance_map(grid, goals=return_goals)
     return_steps = 0
     max_return_steps = width * height * 4
 
@@ -246,15 +237,12 @@ def run_mms_solver() -> None:
 
         # Update local grid model (continue exploring on the way back)
         sensations = WallSensations(front=wf, left=wl, right=wr)
-        walls_changed = grid.update_from_sensations(state, sensations)
+        grid.update_from_sensations(state, sensations)
         if wb:
-            if grid.set_wall(state.cell, state.heading.opposite(), True):
-                walls_changed = True
+            grid.set_wall(state.cell, state.heading.opposite(), True)
 
-        # Incrementally patch return distance map when topology changes
-        if walls_changed:
-            incremental_update(grid, return_dist_map, state.cell, return_goals)
-            fill_dead_ends(grid, return_dist_map, return_goals)
+        # Recompute exact return distance map
+        return_dist_map = compute_distance_map(grid, goals=return_goals)
 
         # Mirror walls to MMS visualizer
         if wf:
