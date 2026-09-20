@@ -1,0 +1,73 @@
+"""Unit tests for Layer 1 Base Flood Fill algorithm."""
+
+from maze_solver.config.settings import MazeConfig
+from maze_solver.core.floodfill import compute_distance_map, get_next_search_move
+from maze_solver.core.maze_grid import MazeGrid
+from maze_solver.core.types import Cell, Direction, MovementCommand, RobotState
+
+
+def test_distance_map_goals_are_zero() -> None:
+    """Verify all destination center cells have distance 0."""
+    grid = MazeGrid()
+    start = Cell(9, 0)
+    grid.initialize_competition_defaults(start_corner=start, initial_heading=Direction.NORTH)
+
+    dist_map = compute_distance_map(grid, MazeConfig.GOAL_CELLS)
+
+    for r, c in MazeConfig.GOAL_CELLS:
+        assert dist_map[r][c] == 0
+
+    # Orthogonal neighbors of goals should have distance 1
+    assert dist_map[3][4] == 1
+    assert dist_map[4][3] == 1
+    assert dist_map[6][5] == 1
+    assert dist_map[5][6] == 1
+
+
+def test_floodfill_halt_at_goal() -> None:
+    """Verify robot halts when it is inside any destination cell."""
+    grid = MazeGrid()
+    dist_map = compute_distance_map(grid)
+    goal_state = RobotState(cell=Cell(4, 4), heading=Direction.NORTH)
+
+    cmd, next_state = get_next_search_move(goal_state, grid, dist_map)
+    assert cmd == MovementCommand.HALT
+    assert next_state == goal_state
+
+
+def test_floodfill_heading_tie_breaker() -> None:
+    """Verify Master Plan §4.1: ties for min distance prioritize keeping the current heading."""
+    grid = MazeGrid()
+    # At (9,0) facing NORTH, moving NORTH reduces distance
+    start = Cell(9, 0)
+    grid.initialize_competition_defaults(start_corner=start, initial_heading=Direction.NORTH)
+    dist_map = compute_distance_map(grid)
+
+    state = RobotState(cell=start, heading=Direction.NORTH)
+    cmd, next_state = get_next_search_move(state, grid, dist_map)
+
+    # Must move FORWARD to (8,0)
+    assert cmd == MovementCommand.FORWARD
+    assert next_state.cell == Cell(8, 0)
+    assert next_state.heading == Direction.NORTH
+
+
+def test_floodfill_turns_when_forward_blocked() -> None:
+    """Verify robot turns to optimal neighbor when current heading is blocked by a wall."""
+    grid = MazeGrid()
+    curr_cell = Cell(2, 2)
+    # Block NORTH
+    grid.set_wall(curr_cell, Direction.NORTH, present=True)
+    dist_map = compute_distance_map(grid)
+
+    state = RobotState(cell=curr_cell, heading=Direction.NORTH)
+    cmd, next_state = get_next_search_move(state, grid, dist_map)
+
+    # Robot cannot go FORWARD, so it must turn left, right, or around
+    assert cmd in (
+        MovementCommand.TURN_LEFT,
+        MovementCommand.TURN_RIGHT,
+        MovementCommand.TURN_AROUND,
+    )
+    assert next_state.cell == curr_cell  # Turn in place
+    assert next_state.heading != Direction.NORTH
