@@ -49,3 +49,5 @@ firmware/build/
 
 # External Tools & Simulators
 tools/
+mazes/
+mazes_num/
