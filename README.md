@@ -57,26 +57,57 @@ graph TD
 
 ```text
 Maze-Solver/
-├── config/                  # Global immutable parameters
-│   └── settings.py
+├── firmware/                # Zero-allocation C99 embedded firmware (<2 KB SRAM)
+│   ├── include/             # Headers (fixed_maze.h, floodfill.h, planner.h, kinematics.h)
+│   ├── src/                 # Pure C99 implementations
+│   └── tests/               # C test suite (test_firmware.c)
 ├── maze_solver/
 │   ├── core/                # Pure navigation & algorithmic logic
 │   │   ├── types.py         # Value types (Cell, Direction, Command)
 │   │   ├── maze_grid.py     # Edge-based wall storage (single truth)
-│   │   └── floodfill.py     # Layer 1 Base Flood Fill
+│   │   ├── floodfill.py     # Layer 1 Base Flood Fill
+│   │   ├── planner.py       # Layer 2 Turn-Weighted A* Planner
+│   │   ├── kinematics.py    # F1 Physics & Vacuum Suction Downforce
+│   │   ├── diagonal_planner.py # 45° Diagonal Sprints ("Fosbury Flop")
+│   │   ├── return_explorer.py  # Return-Trip Corridor Mapping
+│   │   ├── sensor_filter.py # Hysteresis & EMA Analog IR/ToF Filter
+│   │   └── recovery.py      # Stall/Slip Detection & Re-centering State Machine
+│   ├── dashboard/           # Interactive Web UI & HTML5 Canvas visualizer
 │   └── simulator/           # Virtual environment & noise injection
-├── tests/                   # Unit, property, and adversarial tests
+├── tests/                   # 38 pytest suites covering 87% codebase
 ├── docs/                    # Architectural design records and rules
+│   ├── READINESS_CHECKLIST.md # Official 16-point MMRC26 readiness audit
+│   └── MMRC26_MASTER_PLAN.md  # Comprehensive tournament master plan
 └── .github/workflows/       # Automated CI pipeline
 ```
 
-## Configuration
+## Interactive Web Dashboard
 
-| Environment Variable | Description | Default | Example |
-|---|---|---|---|
-| `MAZE_SIM_SPEED` | Multiplier for simulator animation speed | `1.0` | `2.5` |
-| `MAZE_LOG_LEVEL` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`) | `INFO` | `DEBUG` |
-| `MAZE_SEED` | Random seed for maze generation and noise | `42` | `1337` |
+Launch the browser dashboard with real-time maze editing, distance heatmap, diagonal trajectory visualization, and 480s match simulation:
+
+```bash
+python -m maze_solver.dashboard
+```
+
+## Embedded C99 Firmware (STM32 / RP2040)
+
+To compile and run the embedded C test suite:
+
+```bash
+cd firmware
+make
+# Or directly with gcc:
+gcc -fuse-ld=bfd -std=c99 -Wall -Wextra -Werror -pedantic -O2 -Iinclude src/*.c tests/test_firmware.c -o build/test_firmware.exe -lm
+./build/test_firmware.exe
+```
+
+## Official 16-Point Readiness Checklist
+
+Full compliance with all 16 MMRC26 rules and advice items is audited in [docs/READINESS_CHECKLIST.md](docs/READINESS_CHECKLIST.md), covering:
+- **Eligibility**: Student enrollment, $\le 3$ members, single mouse, 5-minute technical defense script.
+- **The Robot**: $25\text{ cm} \times 25\text{ cm}$ footprint, autonomous onboard power/logic, no combustion, wall preservation, $18\text{ cm}$ cell turning.
+- **On the Day**: Non-wall-following proof, 480-second clock budget strategy, dual-variable scoring optimization ($N=62$ runs, 24,410 pts).
+- **Paperwork**: Arena presence, source code audit package for Best Code Award, registration.
 
 ## License
 

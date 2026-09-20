@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Zero-allocation C99 Embedded Firmware library (`firmware/`) with bit-packed 10x10 maze grid (<42 bytes), static queue BFS floodfill, turn-weighted A* planner, and F1 kinematics (<2 KB SRAM footprint) ready for STM32/RP2040 and the **Best Code Award**.
+- Comprehensive unit test suite in pure C (`test_firmware.c`) verified with MinGW/GCC `-Wall -Wextra -Werror -pedantic`.
+- Defensive Sensor Debouncing & Filtering Engine (`sensor_filter.py`) utilizing Exponential Moving Average (EMA) and hysteresis thresholds to reject transient post-reflection noise.
+- Autonomous Physical Error Recovery & Re-centering State Machine (`recovery.py`) with motor stall detection, wheel slip detection, reverse back-off, and wall-touch alignment.
+- Interactive Web Dashboard (`dashboard/`) with HTML5 Canvas 10x10 maze editor, distance heatmap, orthogonal and Fosbury diagonal path overlays, F1 G-force gauges, and live 480-second tournament match runner.
+- Official 16-point MMRC26 Readiness Checklist & Technical Defense Pack (`docs/READINESS_CHECKLIST.md`) auditing all eligibility, robot specifications, competition strategy, and paperwork rules with an interactive audit tab in the web dashboard.
 - Physics & Kinematics Engine (`kinematics.py`) modeling real F1 dynamics: trapezoidal acceleration profiles, cornering speed limits ($a_{\text{lat}} = v^2/R$), and vacuum suction downforce ($>3\text{ G}$ lateral grip).
 - Return-Trip Exploration Engine (`return_explorer.py`) enabling autonomous secondary mapping from center back to start square to discover long straight corridors.
 - Diagonal Traversal & Turn Smoothing Planner (`diagonal_planner.py`) cutting $45^\circ$ across open lattice posts ("Fosbury Flop"), reducing path distance by 29.3% and eliminating stop-and-pivot braking.

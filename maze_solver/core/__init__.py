@@ -16,10 +16,22 @@ from maze_solver.core.kinematics import (
 )
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import plan_turn_weighted_path
+from maze_solver.core.recovery import (
+    FaultDetector,
+    RecoveryAction,
+    RecoveryController,
+    RecoveryState,
+    TelemetryFrame,
+)
 from maze_solver.core.return_explorer import (
     compute_return_distance_map,
     get_next_return_move,
     run_return_trip,
+)
+from maze_solver.core.sensor_filter import (
+    RawDistances,
+    SensorFilter,
+    SensorFilterConfig,
 )
 from maze_solver.core.strategy import (
     MatchPhase,
@@ -40,6 +52,7 @@ from maze_solver.core.types import (
 __all__ = [
     "Cell",
     "Direction",
+    "FaultDetector",
     "KinematicProfile",
     "MatchPhase",
     "MatchResult",
@@ -47,9 +60,16 @@ __all__ = [
     "MotionSegment",
     "MotionSegmentType",
     "MovementCommand",
+    "RawDistances",
+    "RecoveryAction",
+    "RecoveryController",
+    "RecoveryState",
     "RelativeDirection",
     "RobotState",
     "RunRecord",
+    "SensorFilter",
+    "SensorFilterConfig",
+    "TelemetryFrame",
     "WallSensations",
     "calculate_mmrc26_score",
     "can_fit_repeat_run",

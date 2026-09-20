@@ -41,3 +41,8 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+
+# C / Firmware build artifacts
+firmware/build/
+*.exe
+*.o
