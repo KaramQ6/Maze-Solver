@@ -45,6 +45,7 @@ Thumbs.db
 # C / Firmware build artifacts
 firmware/build/
 .pio/
+.pio-core/
 *.exe
 *.o
 
@@ -56,4 +57,3 @@ tools/*
 tools/mms/mms/
 mazes/
 mazes_num/
-

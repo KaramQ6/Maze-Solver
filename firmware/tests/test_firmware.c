@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 
 #include "fixed_maze.h"
 #include "floodfill.h"
@@ -130,6 +131,18 @@ static void test_planner(void) {
            sim_pose.pos.row, sim_pose.pos.col);
 }
 
+static void test_safe_planner_rejects_unvisited_goal(void) {
+    MazeGrid grid;
+    maze_init(&grid);
+    bool visited[MAZE_ROWS][MAZE_COLS];
+    memset(visited, 0, sizeof(visited));
+    visited[5][3] = true;
+    MoveCommand commands[MAX_PATH_COMMANDS];
+    RobotPose start = { .pos = {5, 3}, .dir = DIR_EAST };
+
+    assert(planner_plan_safe_path(&grid, start, TURN_PENALTY_DEFAULT, visited, commands) == -1);
+}
+
 static void test_kinematics(void) {
     printf("[TEST] Running test_kinematics...\n");
     KinematicConfig baseline = {
@@ -174,6 +187,7 @@ int main(void) {
     test_maze_grid();
     test_floodfill();
     test_planner();
+    test_safe_planner_rejects_unvisited_goal();
     test_kinematics();
 
     printf("\n>>> ALL 4 C99 EMBEDDED TEST SUITES PASSED! <<<\n");

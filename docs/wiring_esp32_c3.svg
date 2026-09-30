@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1250" viewBox="0 0 1600 1250" role="img" aria-labelledby="title desc">
+  <title id="title">ESP32-C3 SuperMini micromouse wiring</title>
+  <desc id="desc">Confirmed TB6612FNG motor connections and proposed MPU6500 and three VL53L0X I2C connections. Logic power is 3.3V, controller power is regulated 5V, and motor power must match the motor rating. STBY is tied to 3.3V. No encoders.</desc>
+  <defs>
+    <style>
+      text { font-family: Arial, sans-serif; fill: #16283b; }
+      .title { font-size: 34px; font-weight: 700; }
+      .heading { font-size: 24px; font-weight: 700; }
+      .label { font-size: 20px; }
+      .small { font-size: 17px; }
+      .pin { font-size: 20px; font-family: Consolas, monospace; }
+      .panel { fill: #ffffff; stroke: #a3b3c4; stroke-width: 2; }
+      .motor-a { stroke: #1768bd; stroke-width: 3; fill: none; }
+      .motor-b { stroke: #7043ab; stroke-width: 3; fill: none; }
+      .sda { stroke: #14826b; stroke-width: 3; fill: none; }
+      .scl { stroke: #b47508; stroke-width: 3; fill: none; }
+      .power { stroke: #c24640; stroke-width: 3; fill: none; }
+      .ground { stroke: #425268; stroke-width: 3; fill: none; }
+      .proposed { fill: #fff8e8; stroke: #b47508; stroke-width: 2; stroke-dasharray: 8 5; }
+    </style>
+  </defs>
+  <rect width="1600" height="1250" fill="#f0f4f8"/>
+  <text x="60" y="60" class="title">ESP32-C3 SuperMini · TB6612FNG · MPU6500 · 3 × VL53L0X</text>
+  <text x="60" y="97" class="label">Motor pins: confirmed from your photo. Sensor pins: proposed wiring matching the C3 firmware profile.</text>
+  <rect x="60" y="119" width="1480" height="49" rx="6" fill="#fff1cf"/>
+  <text x="78" y="150" class="label">GPIO numbers are NOT physical header positions. ESP32 “5V” power pin is NOT GPIO5. No encoders.</text>
+
+  <rect x="60" y="195" width="350" height="412" rx="10" class="panel"/>
+  <text x="85" y="234" class="heading">ESP32-C3 SuperMini</text>
+  <text x="85" y="272" class="small">USB Serial · 4 MB flash profile</text>
+  <text x="292" y="312" class="pin">GPIO21</text>
+  <text x="292" y="352" class="pin">GPIO10</text>
+  <text x="292" y="392" class="pin">GPIO20</text>
+  <text x="292" y="432" class="pin">GPIO6</text>
+  <text x="292" y="472" class="pin">GPIO8</text>
+  <text x="292" y="512" class="pin">GPIO7</text>
+  <text x="85" y="554" class="small">GPIO9: onboard BOOT / start button</text>
+  <text x="85" y="582" class="small">GPIO2: unused · GPIO8 LED not used</text>
+
+  <rect x="645" y="195" width="350" height="412" rx="10" class="panel"/>
+  <text x="670" y="234" class="heading">TB6612FNG</text>
+  <text x="670" y="272" class="small">STBY → 3.3V · VCC → 3.3V</text>
+  <text x="668" y="312" class="pin">PWMA</text>
+  <text x="668" y="352" class="pin">AIN1</text>
+  <text x="668" y="392" class="pin">AIN2</text>
+  <text x="668" y="432" class="pin">PWMB</text>
+  <text x="668" y="472" class="pin">BIN1</text>
+  <text x="668" y="512" class="pin">BIN2</text>
+  <text x="670" y="554" class="small">VM → motor supply (voltage to confirm)</text>
+  <text x="670" y="582" class="small">All GND pins → common ground</text>
+  <path d="M410 306 H645 M410 346 H645 M410 386 H645" class="motor-a"/>
+  <path d="M410 426 H645 M410 466 H645 M410 506 H645" class="motor-b"/>
+  <text x="468" y="292" class="small">Channel A / left</text>
+  <text x="468" y="545" class="small">Channel B / right</text>
+
+  <rect x="1180" y="270" width="330" height="105" rx="10" class="panel"/>
+  <text x="1200" y="312" class="heading">LEFT motor — A</text>
+  <text x="1200" y="347" class="label">Two motor wires, not power rails</text>
+  <text x="908" y="311" class="pin">AO1</text>
+  <text x="908" y="351" class="pin">AO2</text>
+  <path d="M995 306 H1180 M995 346 H1180" class="motor-a"/>
+  <rect x="1180" y="430" width="330" height="105" rx="10" class="panel"/>
+  <text x="1200" y="472" class="heading">RIGHT motor — B</text>
+  <text x="1200" y="507" class="label">Swap wires if direction is reversed</text>
+  <text x="908" y="471" class="pin">BO1</text>
+  <text x="908" y="511" class="pin">BO2</text>
+  <path d="M995 466 H1180 M995 506 H1180" class="motor-b"/>
+
+  <text x="60" y="651" class="heading">Proposed sensor wiring — shared 3.3V I2C bus</text>
+  <text x="70" y="695" class="pin">GPIO4 / SDA</text>
+  <path d="M275 688 H1510" class="sda"/>
+  <text x="70" y="736" class="pin">GPIO5 / SCL</text>
+  <path d="M275 729 H1510" class="scl"/>
+
+  <rect x="60" y="776" width="340" height="213" rx="10" class="proposed"/>
+  <text x="82" y="813" class="heading">MPU6500 — gyro</text>
+  <path d="M292 688 V776" class="sda"/>
+  <path d="M350 729 V776" class="scl"/>
+  <text x="82" y="851" class="pin">SDA=4 · SCL=5 · VCC=3.3V</text>
+  <text x="82" y="887" class="pin">AD0 → GND · CS → 3.3V</text>
+  <text x="82" y="923" class="pin">GND → common ground</text>
+  <text x="82" y="961" class="small">I2C 0x68 · WHO_AM_I must be 0x70</text>
+
+  <rect x="440" y="776" width="340" height="213" rx="10" class="proposed"/>
+  <text x="462" y="813" class="heading">VL53L0X — FRONT</text>
+  <path d="M672 688 V776" class="sda"/>
+  <path d="M730 729 V776" class="scl"/>
+  <text x="462" y="851" class="pin">SDA=4 · SCL=5</text>
+  <text x="462" y="887" class="pin">XSHUT → GPIO3</text>
+  <text x="462" y="923" class="pin">VIN=3.3V · GND=common</text>
+  <text x="462" y="961" class="small">Address at startup: 0x29 → 0x32</text>
+
+  <rect x="820" y="776" width="340" height="213" rx="10" class="proposed"/>
+  <text x="842" y="813" class="heading">VL53L0X — LEFT</text>
+  <path d="M1052 688 V776" class="sda"/>
+  <path d="M1110 729 V776" class="scl"/>
+  <text x="842" y="851" class="pin">SDA=4 · SCL=5</text>
+  <text x="842" y="887" class="pin">XSHUT → GPIO0</text>
+  <text x="842" y="923" class="pin">VIN=3.3V · GND=common</text>
+  <text x="842" y="961" class="small">Address at startup: 0x29 → 0x31</text>
+
+  <rect x="1200" y="776" width="340" height="213" rx="10" class="proposed"/>
+  <text x="1222" y="813" class="heading">VL53L0X — RIGHT</text>
+  <path d="M1432 688 V776" class="sda"/>
+  <path d="M1490 729 V776" class="scl"/>
+  <text x="1222" y="851" class="pin">SDA=4 · SCL=5</text>
+  <text x="1222" y="887" class="pin">XSHUT → GPIO1</text>
+  <text x="1222" y="923" class="pin">VIN=3.3V · GND=common</text>
+  <text x="1222" y="961" class="small">Address at startup: 0x29 → 0x30</text>
+
+  <rect x="60" y="1014" width="1480" height="191" rx="10" class="panel"/>
+  <text x="82" y="1052" class="heading">Power nets — battery and converter voltage still need confirmation</text>
+  <text x="82" y="1092" class="label">Battery + → main switch → TB6612 VM AND converter IN+ (within motor/driver ratings).</text>
+  <text x="82" y="1126" class="label">Converter OUT+ at regulated 5.0V → SuperMini 5V pin. Board 3V3 → TB6612 VCC/STBY, IMU, sensor breakouts.</text>
+  <text x="82" y="1160" class="label">Battery −, converter IN−/OUT−, ESP32 GND, driver GND, and every sensor GND → ONE common ground.</text>
+  <text x="82" y="1188" class="small">GPIO20/21 carry UART0 at boot; STBY tied HIGH can permit startup pulses. Test with wheels lifted. GPIO8 is also a boot strap.</text>
+  <text x="60" y="1235" class="small">Verify breakout voltage ratings and labels. Sensor wiring is a proposal, not a claim about existing wires. See docs/HARDWARE_C3.md.</text>
+</svg>

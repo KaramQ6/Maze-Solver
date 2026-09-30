@@ -18,7 +18,7 @@ from maze_solver.core.floodfill import (
 )
 from maze_solver.core.kinematics import KinematicProfile
 from maze_solver.core.maze_grid import MazeGrid
-from maze_solver.core.planner import plan_turn_weighted_path
+from maze_solver.core.planner import path_cost, plan_turn_weighted_path
 from maze_solver.core.types import (
     Cell,
     Direction,
@@ -92,17 +92,23 @@ class MMS_API:
     @classmethod
     def move_forward(cls) -> None:
         # MMS replies with ack / crash
-        cls._command(["moveForward"], str)
+        response = cls._command(["moveForward"], str)
+        if response != "ack":
+            raise RuntimeError(f"MMS moveForward failed: {response}")
 
     @classmethod
     def turn_right(cls) -> None:
         # MMS replies with ack
-        cls._command(["turnRight"], str)
+        response = cls._command(["turnRight"], str)
+        if response != "ack":
+            raise RuntimeError(f"MMS turnRight failed: {response}")
 
     @classmethod
     def turn_left(cls) -> None:
         # MMS replies with ack
-        cls._command(["turnLeft"], str)
+        response = cls._command(["turnLeft"], str)
+        if response != "ack":
+            raise RuntimeError(f"MMS turnLeft failed: {response}")
 
     @classmethod
     def set_wall(cls, x: int, y: int, direction_char: str) -> None:
@@ -321,135 +327,154 @@ def run_mms_solver() -> None:
         elif cmd == MovementCommand.HALT:
             break
 
+    if (state.cell.row, state.cell.col) != start_cell:
+        MMS_API.log("Return trip did not reach start; aborting speed run.")
+        return
+
     # -------------------------------------------------------------
     # PHASE 2: ALL-JAPAN ACTIVE SHORTCUT PROBING
     # -------------------------------------------------------------
-    # Align robot to face NORTH at start position
-    while state.heading != Direction.NORTH:
-        MMS_API.turn_right()
-        state = RobotState(state.cell, state.heading.turn_right())
+    max_probes = 4
+    for probe_idx in range(1, max_probes + 1):
+        # Align robot to face NORTH at start position
+        while state.heading != Direction.NORTH:
+            MMS_API.turn_right()
+            state = RobotState(state.cell, state.heading.turn_right())
 
-    start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
-    visited = set(visit_counts.keys())
+        start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
+        visited = set(visit_counts.keys())
 
-    safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
-    optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
+        safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
+        optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
 
-    # If an unverified shortcut exists, dispatch a targeted probe run
-    if safe_cmds and len(optimistic_cmds) < len(safe_cmds):
+        if not safe_cmds:
+            MMS_API.log("No verified route available; aborting shortcut probing.")
+            break
+        if not optimistic_cmds or path_cost(optimistic_cmds) >= path_cost(safe_cmds):
+            MMS_API.log("No cheaper optimistic route remains to probe.")
+            break
+
         probe_target = find_first_unvisited_on_path(optimistic_cmds, start_state, visited)
-        if probe_target is not None:
-            MMS_API.log(
-                f"All-Japan Phase 2: Active probe towards shortcut cell "
-                f"({probe_target.row}, {probe_target.col})..."
+        if probe_target is None:
+            break
+
+        MMS_API.log(
+            f"All-Japan Phase 2: Probe {probe_idx}/{max_probes} - Active corridor probing "
+            f"(Safe: {len(safe_cmds)} actions | Optimistic: {len(optimistic_cmds)} actions)..."
+        )
+        probe_steps = 0
+        max_probe_steps = width * height * 2
+
+        # Actively probe along the optimistic corridor towards the goal
+        while probe_steps < max_probe_steps:
+            probe_steps += 1
+            pr, pc = state.cell.row, state.cell.col
+            px, py = pc, height - 1 - pr
+
+            wf = MMS_API.wall_front()
+            wl = MMS_API.wall_left()
+            wr = MMS_API.wall_right()
+            wb = MMS_API.wall_back()
+
+            sensations = WallSensations(front=wf, left=wl, right=wr)
+            grid.update_from_sensations(state, sensations)
+            if wb:
+                grid.set_wall(state.cell, state.heading.opposite(), True)
+
+            if wf:
+                MMS_API.set_wall(px, py, dir_char_map[state.heading])
+            if wl:
+                MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_left()])
+            if wr:
+                MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_right()])
+            if wb:
+                MMS_API.set_wall(px, py, dir_char_map[state.heading.opposite()])
+
+            visit_counts[state.cell] += 1
+            MMS_API.set_color(px, py, "y")
+
+            # Probe the first unknown cell of the candidate shortcut, then replan.
+            if state.cell == probe_target:
+                break
+
+            probe_dist = compute_distance_map(grid, goals=((probe_target.row, probe_target.col),))
+            if probe_dist[pr][pc] >= 9000:
+                MMS_API.log(f"Probe {probe_idx}: Blocked corridor at ({px}, {py}); re-evaluating.")
+                break
+
+            cmd, next_state = get_next_search_move(
+                state,
+                grid,
+                probe_dist,
+                goals=((probe_target.row, probe_target.col),),
+                visited_cells=visit_counts,
             )
-            probe_goals: tuple[tuple[int, int], ...] = ((probe_target.row, probe_target.col),)
-            probe_steps = 0
-            max_probe_steps = width * height * 2
 
-            # Navigate towards probe target to sense its walls
-            while probe_steps < max_probe_steps:
-                probe_steps += 1
-                pr, pc = state.cell.row, state.cell.col
-                px, py = pc, height - 1 - pr
-
-                wf = MMS_API.wall_front()
-                wl = MMS_API.wall_left()
-                wr = MMS_API.wall_right()
-                wb = MMS_API.wall_back()
-
-                sensations = WallSensations(front=wf, left=wl, right=wr)
-                grid.update_from_sensations(state, sensations)
-                if wb:
-                    grid.set_wall(state.cell, state.heading.opposite(), True)
-
-                if wf:
-                    MMS_API.set_wall(px, py, dir_char_map[state.heading])
-                if wl:
-                    MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_left()])
-                if wr:
-                    MMS_API.set_wall(px, py, dir_char_map[state.heading.turn_right()])
-                if wb:
-                    MMS_API.set_wall(px, py, dir_char_map[state.heading.opposite()])
-
-                visit_counts[state.cell] += 1
-                MMS_API.set_color(px, py, "y")
-
-                if state.cell == probe_target:
-                    MMS_API.log("Shortcut corridor reached and verified!")
-                    break
-
-                probe_dist = compute_distance_map(grid, goals=probe_goals)
-                if probe_dist[pr][pc] >= 9000:
-                    MMS_API.log("Probe discovered blocked corridor; shortcut disproven.")
-                    break
-
-                cmd, next_state = get_next_search_move(
-                    state, grid, probe_dist, goals=probe_goals, visited_cells=visit_counts
-                )
-
-                if cmd == MovementCommand.FORWARD:
-                    MMS_API.move_forward()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_LEFT:
-                    MMS_API.turn_left()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_RIGHT:
-                    MMS_API.turn_right()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_AROUND:
-                    MMS_API.turn_right()
-                    MMS_API.turn_right()
-                    state = next_state
-                elif cmd == MovementCommand.HALT:
-                    break
-
-            # Return to start after probe
-            ret_dist = compute_distance_map(grid, goals=return_goals)
-            ret_steps = 0
-            while ret_steps < max_return_steps:
-                ret_steps += 1
-                if (state.cell.row, state.cell.col) == start_cell:
-                    break
-
-                wf = MMS_API.wall_front()
-                wl = MMS_API.wall_left()
-                wr = MMS_API.wall_right()
-                wb = MMS_API.wall_back()
-
-                sensations = WallSensations(front=wf, left=wl, right=wr)
-                grid.update_from_sensations(state, sensations)
-                if wb:
-                    grid.set_wall(state.cell, state.heading.opposite(), True)
-
-                visit_counts[state.cell] += 1
-                MMS_API.set_color(state.cell.col, height - 1 - state.cell.row, "o")
-
-                ret_dist = compute_distance_map(grid, goals=return_goals)
-                cmd, next_state = get_next_search_move(
-                    state, grid, ret_dist, goals=return_goals, visited_cells=visit_counts
-                )
-
-                if cmd == MovementCommand.FORWARD:
-                    MMS_API.move_forward()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_LEFT:
-                    MMS_API.turn_left()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_RIGHT:
-                    MMS_API.turn_right()
-                    state = next_state
-                elif cmd == MovementCommand.TURN_AROUND:
-                    MMS_API.turn_right()
-                    MMS_API.turn_right()
-                    state = next_state
-                elif cmd == MovementCommand.HALT:
-                    break
-
-            # Re-align heading to NORTH at start
-            while state.heading != Direction.NORTH:
+            if cmd == MovementCommand.FORWARD:
+                MMS_API.move_forward()
+                state = next_state
+            elif cmd == MovementCommand.TURN_LEFT:
+                MMS_API.turn_left()
+                state = next_state
+            elif cmd == MovementCommand.TURN_RIGHT:
                 MMS_API.turn_right()
-                state = RobotState(state.cell, state.heading.turn_right())
+                state = next_state
+            elif cmd == MovementCommand.TURN_AROUND:
+                MMS_API.turn_right()
+                MMS_API.turn_right()
+                state = next_state
+            elif cmd == MovementCommand.HALT:
+                break
+
+        # Return to start after probe run
+        ret_steps = 0
+        while ret_steps < max_return_steps:
+            ret_steps += 1
+            if (state.cell.row, state.cell.col) == start_cell:
+                break
+
+            wf = MMS_API.wall_front()
+            wl = MMS_API.wall_left()
+            wr = MMS_API.wall_right()
+            wb = MMS_API.wall_back()
+
+            sensations = WallSensations(front=wf, left=wl, right=wr)
+            grid.update_from_sensations(state, sensations)
+            if wb:
+                grid.set_wall(state.cell, state.heading.opposite(), True)
+
+            visit_counts[state.cell] += 1
+            MMS_API.set_color(state.cell.col, height - 1 - state.cell.row, "o")
+
+            ret_dist = compute_distance_map(grid, goals=return_goals)
+            cmd, next_state = get_next_search_move(
+                state, grid, ret_dist, goals=return_goals, visited_cells=visit_counts
+            )
+
+            if cmd == MovementCommand.FORWARD:
+                MMS_API.move_forward()
+                state = next_state
+            elif cmd == MovementCommand.TURN_LEFT:
+                MMS_API.turn_left()
+                state = next_state
+            elif cmd == MovementCommand.TURN_RIGHT:
+                MMS_API.turn_right()
+                state = next_state
+            elif cmd == MovementCommand.TURN_AROUND:
+                MMS_API.turn_right()
+                MMS_API.turn_right()
+                state = next_state
+            elif cmd == MovementCommand.HALT:
+                break
+
+        if (state.cell.row, state.cell.col) != start_cell:
+            MMS_API.log("Probe return did not reach start; aborting speed run.")
+            return
+
+        # Re-align heading to NORTH at start
+        while state.heading != Direction.NORTH:
+            MMS_API.turn_right()
+            state = RobotState(state.cell, state.heading.turn_right())
 
     # -------------------------------------------------------------
     # PHASE 3: PROVEN GLOBAL OPTIMAL SPEED RUN EXECUTION
@@ -458,7 +483,7 @@ def run_mms_solver() -> None:
     safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
     optimistic_cmds = plan_turn_weighted_path(grid, start_state, goals=goals)
 
-    if safe_cmds and len(optimistic_cmds) >= len(safe_cmds):
+    if safe_cmds and optimistic_cmds and path_cost(optimistic_cmds) >= path_cost(safe_cmds):
         MMS_API.log(
             "PROVEN GLOBAL OPTIMUM: Mathematically proven fastest route across entire maze!"
         )
@@ -467,8 +492,8 @@ def run_mms_solver() -> None:
         speed_cmds = safe_cmds
         MMS_API.log(f"Verified Safe Path: {len(speed_cmds)} actions.")
     else:
-        MMS_API.log("Fallback to optimistic path.")
-        speed_cmds = optimistic_cmds
+        MMS_API.log("No verified path to goal; aborting speed run.")
+        return
 
     if not speed_cmds:
         MMS_API.log("WARNING: No valid path to goal could be computed! Aborting speed run.")

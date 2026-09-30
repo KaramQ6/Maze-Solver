@@ -1,7 +1,7 @@
 """Unit tests for Layer 2 Turn-Weighted State-Space Planner (A*)."""
 
 from maze_solver.core.maze_grid import MazeGrid
-from maze_solver.core.planner import plan_turn_weighted_path
+from maze_solver.core.planner import path_cost, plan_turn_weighted_path
 from maze_solver.core.types import Cell, Direction, MovementCommand, RobotState
 
 
@@ -86,3 +86,21 @@ def test_planner_constrained_to_known_cells() -> None:
     for c in trajectory:
         assert c in visited, f"Cell {c} in trajectory was NOT in visited_cells!"
     assert trajectory[-1] == Cell(2, 2)
+
+
+def test_planner_does_not_assume_unvisited_goal_entrance_is_open() -> None:
+    grid = MazeGrid()
+    start = RobotState(Cell(5, 3), Direction.EAST)
+
+    commands = plan_turn_weighted_path(grid, start, goals=((5, 4),), known_cells={start.cell})
+
+    assert commands == []
+
+
+def test_path_cost_uses_turn_weight_instead_of_command_count() -> None:
+    short_with_turnaround = [MovementCommand.TURN_AROUND, MovementCommand.FORWARD]
+    longer_straight = [MovementCommand.FORWARD] * 3
+
+    assert path_cost(short_with_turnaround, turn_penalty=2.0) > path_cost(
+        longer_straight, turn_penalty=2.0
+    )

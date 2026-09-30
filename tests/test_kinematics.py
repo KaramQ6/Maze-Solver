@@ -4,6 +4,7 @@ import math
 
 import pytest
 
+from maze_solver.config.settings import MazeConfig
 from maze_solver.core.kinematics import (
     KinematicProfile,
     compute_straight_time,
@@ -11,6 +12,11 @@ from maze_solver.core.kinematics import (
     evaluate_trajectory_kinematics,
 )
 from maze_solver.core.types import MovementCommand
+
+
+def test_cell_pitch_includes_wall_thickness() -> None:
+    assert KinematicProfile().cell_size_m == pytest.approx(MazeConfig.CELL_PITCH_CM / 100.0)
+    assert MazeConfig.CELL_PITCH_CM == pytest.approx(19.2)
 
 
 def test_straight_trapezoidal_profile() -> None:

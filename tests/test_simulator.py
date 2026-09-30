@@ -1,7 +1,9 @@
 """Unit tests for virtual robot simulation and end-to-end Search Run execution."""
 
+from unittest.mock import patch
+
 from maze_solver.core.maze_grid import MazeGrid
-from maze_solver.core.types import Cell, Direction, MovementCommand, RobotState
+from maze_solver.core.types import Cell, Direction, MovementCommand, RobotState, WallSensations
 from maze_solver.simulator.maze_generator import generate_island_maze
 from maze_solver.simulator.runner import run_search
 from maze_solver.simulator.virtual_mouse import VirtualMouse
@@ -102,3 +104,32 @@ def test_virtual_mouse_noise_injection() -> None:
     assert sensations.front is True
     assert sensations.left is True
     assert sensations.right is True
+
+
+def test_search_succeeds_with_independent_sensor_noise() -> None:
+    successful = sum(
+        run_search(generate_island_maze(seed=seed), noise_rate=0.05, seed=seed).success
+        for seed in range(20)
+    )
+
+    assert successful >= 18
+
+
+def test_confirmed_sensing_resamples_only_disagreements() -> None:
+    mouse = VirtualMouse(Cell(5, 5), Direction.NORTH)
+    grid = MazeGrid()
+    readings = [
+        WallSensations(True, False, False),
+        WallSensations(False, False, False),
+        WallSensations(True, False, False),
+        WallSensations(False, False, False),
+        WallSensations(False, False, False),
+    ]
+
+    with patch.object(mouse, "sense_walls", side_effect=readings) as sensor:
+        assert mouse.sense_confirmed_walls(grid).front is False
+        assert sensor.call_count == 5
+
+    with patch.object(mouse, "sense_walls", return_value=readings[0]) as sensor:
+        assert mouse.sense_confirmed_walls(grid).front is True
+        assert sensor.call_count == 3

@@ -21,22 +21,23 @@ extern "C" {
 void controller_init(void);
 
 /**
- * @brief Move forward exactly one 18cm maze unit cell with dual PID stabilization.
- * @param wall_ahead true if a front wall is known to block the destination cell.
+ * @brief Move one 192mm cell-center pitch with heading and wall stabilization.
  * @param base_pwm Nominal speed duty cycle (e.g. SEARCH_BASE_PWM or SPEEDRUN_BASE_PWM).
+ * @return true only when cell arrival is confirmed; false on timeout or sensor fault.
  */
-void controller_step_forward(bool wall_ahead, int base_pwm);
+bool controller_step_forward(int base_pwm);
 
 /**
  * @brief Execute a precise in-place 90-degree pivot turn using gyro angular feedback.
  * @param turn_left true for 90-degree counter-clockwise, false for 90-degree clockwise.
+ * @return true when heading reaches the target tolerance.
  */
-void controller_turn_90(bool turn_left);
+bool controller_turn_90(bool turn_left);
 
 /**
  * @brief Execute an in-place 180-degree turnaround.
  */
-void controller_turn_180(void);
+bool controller_turn_180(void);
 
 /**
  * @brief Fine-tune alignment at cell stop using front wall distance if present.

@@ -22,6 +22,20 @@ def _heuristic_manhattan(cell: Cell, goals: tuple[tuple[int, int], ...]) -> floa
     return float(min(abs(cell.row - gr) + abs(cell.col - gc) for gr, gc in goals))
 
 
+def path_cost(
+    commands: list[MovementCommand], turn_penalty: float = MazeConfig.TURN_PENALTY
+) -> float:
+    """Compute the same forward/turn cost minimized by the planner."""
+    return sum(
+        1.0
+        if command == MovementCommand.FORWARD
+        else 2.0 * turn_penalty
+        if command == MovementCommand.TURN_AROUND
+        else turn_penalty
+        for command in commands
+    )
+
+
 def plan_turn_weighted_path(
     grid: MazeGrid,
     start_state: RobotState,
@@ -73,11 +87,7 @@ def plan_turn_weighted_path(
             next_cell = curr_cell.neighbor(curr_heading)
 
             # If constrained to known cells, reject stepping into unvisited territory
-            if (
-                known_cells is not None
-                and next_cell not in known_cells
-                and (next_cell.row, next_cell.col) not in goal_set
-            ):
+            if known_cells is not None and next_cell not in known_cells:
                 pass
             else:
                 next_state = RobotState(next_cell, curr_heading)

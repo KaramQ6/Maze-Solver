@@ -21,24 +21,31 @@ typedef struct {
 
 typedef struct {
     HeapNode nodes[NUM_STATES];
+    int16_t positions[NUM_STATES];
     int size;
 } MinHeap;
 
 static void heap_push(MinHeap *heap, uint16_t state_id, float f_score) {
-    int i = heap->size++;
+    int i = heap->positions[state_id];
+    if (i < 0) {
+        i = heap->size++;
+    }
     while (i > 0) {
         int parent = (i - 1) / 2;
         if (heap->nodes[parent].f_score <= f_score) break;
         heap->nodes[i] = heap->nodes[parent];
+        heap->positions[heap->nodes[i].state_id] = (int16_t)i;
         i = parent;
     }
     heap->nodes[i].state_id = state_id;
     heap->nodes[i].f_score = f_score;
+    heap->positions[state_id] = (int16_t)i;
 }
 
 static HeapNode heap_pop(MinHeap *heap) {
     HeapNode min_node = heap->nodes[0];
     HeapNode last = heap->nodes[--heap->size];
+    heap->positions[min_node.state_id] = -1;
     if (heap->size == 0) return min_node;
 
     int i = 0;
@@ -51,9 +58,11 @@ static HeapNode heap_pop(MinHeap *heap) {
         }
         if (last.f_score <= heap->nodes[smallest].f_score) break;
         heap->nodes[i] = heap->nodes[smallest];
+        heap->positions[heap->nodes[i].state_id] = (int16_t)i;
         i = smallest;
     }
     heap->nodes[i] = last;
+    heap->positions[last.state_id] = (int16_t)i;
     return min_node;
 }
 
@@ -82,10 +91,12 @@ int planner_plan_safe_path(
     const MazeGrid *grid,
     RobotPose start_pose,
     float turn_penalty,
-    const bool known_cells[MAZE_ROWS][MAZE_COLS],
+    bool known_cells[MAZE_ROWS][MAZE_COLS],
     MoveCommand out_commands[MAX_PATH_COMMANDS]
 ) {
-    if (!grid || !out_commands) return -1;
+    if (!grid || !out_commands || !isfinite(turn_penalty) || turn_penalty < 0.0f
+        || start_pose.pos.row >= MAZE_ROWS || start_pose.pos.col >= MAZE_COLS
+        || start_pose.dir < DIR_NORTH || start_pose.dir > DIR_WEST) return -1;
 
     if (maze_is_goal(start_pose.pos.row, start_pose.pos.col)) {
         return 0;
@@ -103,8 +114,9 @@ int planner_plan_safe_path(
         closed[i] = false;
     }
 
-    MinHeap heap;
+    static MinHeap heap; /* Keep the bounded open set off the ESP32 loop task stack. */
     heap.size = 0;
+    for (int i = 0; i < NUM_STATES; i++) heap.positions[i] = -1;
 
     uint16_t start_id = encode_state(start_pose.pos.row, start_pose.pos.col, start_pose.dir);
     g_score[start_id] = 0.0f;
@@ -133,7 +145,7 @@ int planner_plan_safe_path(
             int8_t nr = (int8_t)(r + ROW_OFFSETS[d]);
             int8_t nc = (int8_t)(c + COL_OFFSETS[d]);
             if (nr >= 0 && nr < MAZE_ROWS && nc >= 0 && nc < MAZE_COLS) {
-                if (known_cells != NULL && !known_cells[nr][nc] && !maze_is_goal((uint8_t)nr, (uint8_t)nc)) {
+                if (known_cells != NULL && !known_cells[nr][nc]) {
                     /* Skip unverified cells when safety constraint is active */
                 } else {
                     uint16_t next_id = encode_state((uint8_t)nr, (uint8_t)nc, d);
@@ -197,7 +209,7 @@ int planner_plan_safe_path(
     }
 
     /* Reconstruct path */
-    MoveCommand temp_commands[MAX_PATH_COMMANDS];
+    static MoveCommand temp_commands[MAX_PATH_COMMANDS];
     int count = 0;
     uint16_t curr = goal_reached_state;
 
@@ -205,6 +217,7 @@ int planner_plan_safe_path(
         temp_commands[count++] = (MoveCommand)parent_action[curr];
         curr = (uint16_t)parent_state[curr];
     }
+    if (curr != start_id) return -1;
 
     /* Reverse commands into out_commands */
     for (int i = 0; i < count; i++) {

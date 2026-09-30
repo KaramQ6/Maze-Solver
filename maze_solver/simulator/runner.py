@@ -76,7 +76,7 @@ def run_search(
         visited_cells.add(current_pose.cell)
 
         # A. Sense physical walls
-        sensations = mouse.sense_walls(ground_truth)
+        sensations = mouse.sense_confirmed_walls(ground_truth)
 
         # B. Update internal map
         discovered_grid.update_from_sensations(current_pose, sensations)

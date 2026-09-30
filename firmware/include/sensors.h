@@ -1,6 +1,6 @@
 /**
  * @file sensors.h
- * @brief Dynamic I2C sequencer for 3x VL53L0X ToF sensors and MPU6050 gyro odometry.
+ * @brief I2C sequencer for 3x VL53L0X sensors and MPU6050/MPU6500 heading feedback.
  * @author MMRC26 Team
  */
 
@@ -23,7 +23,7 @@ typedef struct {
 } SensorDistances;
 
 /**
- * @brief Initialize I2C bus, sequence ToF addresses via XSHUT, and calibrate MPU6050.
+ * @brief Initialize I2C, validate IMU identity, sequence ToF addresses, and calibrate gyro.
  * @return true if all 4 I2C devices initialized successfully.
  */
 bool sensors_init(void);
@@ -31,14 +31,16 @@ bool sensors_init(void);
 /**
  * @brief Read all three ToF range sensors and update wall detection flags.
  * @param out_distances Pointer to SensorDistances struct to fill.
+ * @return false if a sensor times out or reports an invalid distance; ignore output then.
  */
-void sensors_read_distances(SensorDistances *out_distances);
+bool sensors_read_distances(SensorDistances *out_distances);
 
 /**
- * @brief Sample MPU6050 gyro Z-axis and integrate into heading estimate.
+ * @brief Sample IMU gyro Z-axis and integrate into heading estimate.
  * Call frequently from the control loop (e.g. 100Hz - 200Hz).
+ * @return false on I2C failure or a sampling gap exceeding 100ms during motion.
  */
-void sensors_update_gyro(void);
+bool sensors_update_gyro(void);
 
 /**
  * @brief Get current estimated heading in degrees.

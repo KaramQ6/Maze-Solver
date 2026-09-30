@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Confirm firmware motion and sensor reads before advancing robot pose or banking a run; abort on timeouts, invalid ranges, or incomplete speed plans. Require both wheel encoders to reach the physical cell pitch.
+- Constrain speed runs to verified cells and require actual goal arrival in simulation; MMS rejects failed moves and probes the first unknown shortcut cell.
+- Bound embedded A* heap to one entry per state, keep planning buffers off the loop stack, and avoid silently truncating long paths; align CI with the active branch and add firmware checks.
+- Confirm exploration walls with three readings, sampling twice more only when channels disagree; this reduces permanent mapping errors from transient noise.
+
 ### Added
-- Zero-allocation C99 Embedded Firmware library (`firmware/`) with bit-packed 10x10 maze grid (<42 bytes), static queue BFS floodfill, turn-weighted A* planner, and F1 kinematics (<2 KB SRAM footprint) ready for STM32/RP2040 and the **Best Code Award**.
+- ESP32-C3 SuperMini/TB6612FNG/MPU6500 profile without encoders, ToF-referenced cell motion, hardware-path regression tests, and an SVG wiring diagram with confirmed/proposed nets.
+- Zero-allocation C99 Embedded Firmware library (`firmware/`) with a 42-byte bit-packed 10x10 maze grid, static queue BFS floodfill, bounded turn-weighted A* planner, and kinematics.
 - Comprehensive unit test suite in pure C (`test_firmware.c`) verified with MinGW/GCC `-Wall -Wextra -Werror -pedantic`.
 - Defensive Sensor Debouncing & Filtering Engine (`sensor_filter.py`) utilizing Exponential Moving Average (EMA) and hysteresis thresholds to reject transient post-reflection noise.
 - Autonomous Physical Error Recovery & Re-centering State Machine (`recovery.py`) with motor stall detection, wheel slip detection, reverse back-off, and wall-touch alignment.

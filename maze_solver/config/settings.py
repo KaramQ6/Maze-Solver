@@ -16,6 +16,7 @@ class MazeConfig:
     MAZE_COLS: int = 10
     CELL_SIZE_CM: float = 18.0
     WALL_THICKNESS_MM: float = 12.0
+    CELL_PITCH_CM: float = CELL_SIZE_CM + WALL_THICKNESS_MM / 10.0
     WALL_HEIGHT_CM: float = 5.0
     LATTICE_POST_MM: float = 12.0
 

@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
+from maze_solver.config.settings import MazeConfig
 from maze_solver.core.kinematics import KinematicProfile, compute_straight_time
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.types import (
@@ -76,7 +77,7 @@ def is_diagonal_clear(
     if not grid.is_passable(from_cell, v_dir):
         return False
 
-    return True
+    return grid.is_passable(c_horizontal, v_dir) and grid.is_passable(c_vertical, h_dir)
 
 
 def smooth_path_to_diagonals(
@@ -109,7 +110,7 @@ def smooth_path_to_diagonals(
 
     # 2. Parse command stream into segments
     segments: list[MotionSegment] = []
-    cell_size = 0.18
+    cell_size = MazeConfig.CELL_PITCH_CM / 100.0
     diagonal_unit = math.sqrt(2) * cell_size
 
     i = 0

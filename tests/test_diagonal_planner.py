@@ -25,6 +25,10 @@ def test_is_diagonal_clear() -> None:
     grid.set_wall(from_cell, Direction.EAST, present=True)
     assert not is_diagonal_clear(grid, from_cell, to_cell)
 
+    grid.set_wall(from_cell, Direction.EAST, present=False)
+    grid.set_wall(Cell(2, 3), Direction.NORTH, present=True)
+    assert not is_diagonal_clear(grid, from_cell, to_cell)
+
 
 def test_smooth_path_to_diagonals_converts_zigzag() -> None:
     """Verify that a right-left zigzag sequence is transformed into a diagonal sprint."""

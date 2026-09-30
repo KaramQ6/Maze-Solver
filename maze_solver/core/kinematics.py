@@ -10,6 +10,7 @@ Implements real-world physical dynamics:
 import math
 from dataclasses import dataclass
 
+from maze_solver.config.settings import MazeConfig
 from maze_solver.core.types import MovementCommand
 
 GRAVITY = 9.80665  # m/s^2
@@ -23,7 +24,7 @@ class KinematicProfile:
     max_accel_mps2: float = 12.0
     friction_coefficient: float = 0.8
     suction_multiplier: float = 3.0  # Downforce = multiplier * m * g
-    cell_size_m: float = 0.18
+    cell_size_m: float = MazeConfig.CELL_PITCH_CM / 100.0
     turn_radius_m: float = 0.09
 
     @property

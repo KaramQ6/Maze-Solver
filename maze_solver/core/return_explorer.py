@@ -131,7 +131,7 @@ def run_return_trip(
             return True, total_time, new_walls_count
 
         # 1. Sense and update map along the return path
-        sensations = mouse.sense_walls(ground_truth)
+        sensations = mouse.sense_confirmed_walls(ground_truth)
         if discovered_grid.update_from_sensations(current_pose, sensations):
             new_walls_count += 1
 

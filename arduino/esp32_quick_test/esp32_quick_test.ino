@@ -1,23 +1,24 @@
 /**
  * @file esp32_quick_test.ino
- * @brief Rapid Hardware Smoke-Test & I2C Scanner for DOIT ESP32 DevKit V1.
+ * @brief Rapid Hardware Smoke-Test & I2C Scanner for Seeed Studio XIAO ESP32-S3.
  * 
  * Functions:
- * 1. Blinks the onboard blue LED on GPIO 2.
- * 2. Continuously scans the I2C bus on GPIO 21 (SDA) and GPIO 22 (SCL).
- * 3. Monitors the Start Button on GPIO 13.
+ * 1. Checks USB CDC Serial connection on Native USB.
+ * 2. Scans I2C bus on D4 (GPIO 5 - SDA) and D5 (GPIO 6 - SCL) at 400kHz.
+ * 3. Monitors Onboard BOOT Button (GPIO 0).
+ * 4. Toggles optional external status LED / buzzer on D10 (GPIO 9).
  */
 
 #include <Arduino.h>
 #include <Wire.h>
 
-#define LED_PIN     2   /* Onboard Blue LED on DOIT DevKit V1 */
-#define BUTTON_PIN  13  /* Start Button input */
-#define SDA_PIN     21  /* Default ESP32 I2C Data */
-#define SCL_PIN     22  /* Default ESP32 I2C Clock */
+#define PIN_BOOT_BTN    0   /* Onboard BOOT button on XIAO ESP32-S3 */
+#define PIN_SDA         5   /* D4 (GPIO 5) */
+#define PIN_SCL         6   /* D5 (GPIO 6) */
+#define PIN_STATUS_LED  9   /* D10 (GPIO 9) - Optional external LED */
 
 void scan_i2c() {
-    Serial.println("\n--- Scanning I2C Bus (SDA=21, SCL=22) ---");
+    Serial.println("\n--- Scanning I2C Bus: SDA=D4(GPIO5), SCL=D5(GPIO6) ---");
     byte count = 0;
 
     for (byte address = 1; address < 127; address++) {
@@ -25,54 +26,64 @@ void scan_i2c() {
         byte error = Wire.endTransmission();
 
         if (error == 0) {
-            Serial.printf("[FOUND] I2C device detected at address 0x%02X", address);
-            if (address == 0x68) Serial.print(" (MPU6050 Gyro/Accel)");
-            else if (address == 0x29) Serial.print(" (VL53L0X Default / Front)");
-            else if (address == 0x30) Serial.print(" (VL53L0X Left)");
-            else if (address == 0x31) Serial.print(" (VL53L0X Right)");
+            Serial.printf("[FOUND] I2C device at 0x%02X", address);
+            if (address == 0x68) Serial.print(" -> MPU6050 6-Axis Gyro/Accelerometer");
+            else if (address == 0x29) Serial.print(" -> VL53L0X (Factory Default Address)");
+            else if (address == 0x30) Serial.print(" -> VL53L0X (Right Sensor Re-addressed)");
+            else if (address == 0x31) Serial.print(" -> VL53L0X (Left Sensor Re-addressed)");
+            else if (address == 0x32) Serial.print(" -> VL53L0X (Front Sensor Re-addressed)");
             Serial.println();
             count++;
         } else if (error == 4) {
-            Serial.printf("[ERROR] Unknown error at address 0x%02X\n", address);
+            Serial.printf("[ERROR] Bus error at address 0x%02X\n", address);
         }
     }
 
     if (count == 0) {
-        Serial.println("No I2C devices attached yet (normal if sensors are not wired).");
+        Serial.println("No I2C devices detected. Check 3.3V, GND, and SDA(D4)/SCL(D5) connections.");
     } else {
-        Serial.printf("Done. Total %d device(s) found.\n", count);
+        Serial.printf(">>> Scan complete: %d device(s) active on bus.\n", count);
     }
 }
 
 void setup() {
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+    pinMode(PIN_STATUS_LED, OUTPUT);
+    digitalWrite(PIN_STATUS_LED, LOW);
 
     Serial.begin(115200);
-    delay(1000);
+    delay(1500); /* Allow USB CDC handshake */
 
-    Serial.println("\n==========================================");
-    Serial.println("  DOIT ESP32 DevKit V1 - Hardware Test    ");
-    Serial.println("==========================================");
-    Serial.println("If you can read this, USB Serial & Flash are 100% OK!");
+    Serial.println("\n==============================================");
+    Serial.println("  Seeed Studio XIAO ESP32-S3 - Smoke Test     ");
+    Serial.println("==============================================");
+    Serial.println("✓ USB Serial CDC: OK");
+    Serial.println("✓ Xtensa LX7 Dual-Core @ 240MHz");
+    Serial.printf("✓ Free Heap: %d KB\n", ESP.getFreeHeap() / 1024);
+    Serial.printf("✓ Total PSRAM: %d KB\n", ESP.getPsramSize() / 1024);
+    Serial.println("Press the onboard BOOT button (GPIO 0) to test button input.");
+    Serial.println("==============================================\n");
 
-    Wire.begin(SDA_PIN, SCL_PIN, 400000);
+    Wire.begin(PIN_SDA, PIN_SCL, 400000);
+    scan_i2c();
 }
 
 void loop() {
-    /* Blink onboard LED */
-    digitalWrite(LED_PIN, HIGH);
-    delay(300);
-    digitalWrite(LED_PIN, LOW);
-    delay(300);
+    /* Toggle external status LED pin */
+    digitalWrite(PIN_STATUS_LED, HIGH);
+    delay(250);
+    digitalWrite(PIN_STATUS_LED, LOW);
+    delay(250);
 
-    /* Check button */
-    if (digitalRead(BUTTON_PIN) == LOW) {
-        Serial.println("[BUTTON] Start Button (GPIO 13) is PRESSED!");
+    /* Test onboard BOOT button */
+    if (digitalRead(PIN_BOOT_BTN) == LOW) {
+        Serial.println(">>> [BUTTON PRESSED] Onboard BOOT Button (GPIO 0) active!");
+        delay(200); /* Simple debounce */
     }
 
+    /* Periodic I2C Scan every 5 seconds */
     static unsigned long last_scan = 0;
-    if (millis() - last_scan > 4000) {
+    if (millis() - last_scan > 5000) {
         last_scan = millis();
         scan_i2c();
     }

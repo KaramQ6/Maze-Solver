@@ -26,7 +26,7 @@ cd Maze-Solver
 pytest -v
 
 # Run lint and type checks
-ruff check .
+ruff check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py
 mypy maze_solver tests
 ```
 
@@ -36,10 +36,13 @@ mypy maze_solver tests
 |---|---|
 | `pytest -v` | Run full test suite with verbose output |
 | `pytest --cov=maze_solver` | Run test coverage report |
-| `ruff check .` | Run linter across all source files |
-| `ruff format --check .` | Check formatting compliance |
-| `ruff format .` | Auto-format Python code |
+| `ruff check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py` | Lint solver, tests, and simulator tools |
+| `ruff format --check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py` | Check solver and test formatting |
+| `ruff format maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py` | Format solver and test code |
 | `mypy maze_solver tests` | Run static type checker in strict mode |
+| `make -C firmware test` | Run the C99 navigation tests (GNU Make and GCC) |
+| `pio run -e esp32_c3_supermini` | Build the team's ESP32-C3 / TB6612FNG firmware |
+| `make -C firmware test-c3` | Exercise C3 motor and sensor code using simulated hardware IO |
 
 ## Architecture
 
@@ -57,9 +60,9 @@ graph TD
 
 ```text
 Maze-Solver/
-├── firmware/                # Zero-allocation C99 embedded firmware (<2 KB SRAM)
+├── firmware/                # Bounded-memory C99 navigation and ESP32 controller
 │   ├── include/             # Headers (fixed_maze.h, floodfill.h, planner.h, kinematics.h)
-│   ├── src/                 # Pure C99 implementations
+│   ├── src/                 # C99 navigation and C++ ESP32 hardware control
 │   └── tests/               # C test suite (test_firmware.c)
 ├── maze_solver/
 │   ├── core/                # Pure navigation & algorithmic logic
@@ -74,7 +77,7 @@ Maze-Solver/
 │   │   └── recovery.py      # Stall/Slip Detection & Re-centering State Machine
 │   ├── dashboard/           # Interactive Web UI & HTML5 Canvas visualizer
 │   └── simulator/           # Virtual environment & noise injection
-├── tests/                   # 38 pytest suites covering 87% codebase
+├── tests/                   # Python unit and simulation tests
 ├── docs/                    # Architectural design records and rules
 │   ├── READINESS_CHECKLIST.md # Official 16-point MMRC26 readiness audit
 │   └── MMRC26_MASTER_PLAN.md  # Comprehensive tournament master plan
@@ -89,7 +92,9 @@ Launch the browser dashboard with real-time maze editing, distance heatmap, diag
 python -m maze_solver.dashboard
 ```
 
-## Embedded C99 Firmware (STM32 / RP2040)
+## Embedded firmware (ESP32-C3 with C99 navigation core)
+
+The team's hardware profile is **ESP32-C3 SuperMini + TB6612FNG + MPU6500 + three VL53L0X sensors, without encoders**. See the [wiring diagram](docs/wiring_esp32_c3.svg) and [hardware setup / calibration](docs/HARDWARE_C3.md). The earlier XIAO ESP32-S3 profile remains selectable through PlatformIO.
 
 To compile and run the embedded C test suite:
 
@@ -100,6 +105,10 @@ make
 gcc -fuse-ld=bfd -std=c99 -Wall -Wextra -Werror -pedantic -O2 -Iinclude src/*.c tests/test_firmware.c -o build/test_firmware.exe -lm
 ./build/test_firmware.exe
 ```
+
+The C3 firmware requires the IMU and all three ToF sensors to initialize before BOOT starts a run. Calibrate turn alignment, ToF thresholds, and cell displacement on the robot. Simulation run times are estimates; diagonal visualization does not execute a diagonal motion on the robot. The older encoder profile also needs encoder-distance calibration.
+
+For reproducible software-only exploration checks, the simulator uses independent noise samples; confirmed wall readings use three samples (five if they disagree). Sensor noise on real hardware may be correlated, so calibrate this voting policy against actual ToF logs before racing.
 
 ## Official 16-Point Readiness Checklist
 

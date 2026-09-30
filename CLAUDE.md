@@ -12,13 +12,21 @@
 - **Language**: Python 3.11+
 - **Commands**:
   - Run Tests: `pytest -v`
-  - Check Linter: `ruff check .`
-  - Format Check: `ruff format --check .`
-  - Format Apply: `ruff format .`
+  - Check Linter: `ruff check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py`
+  - Format Check: `ruff format --check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py`
+  - Format Apply: `ruff format maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py`
   - Typecheck: `mypy maze_solver tests`
+  - C99 Firmware Tests (GNU Make/GCC): `make -C firmware test`
+  - ESP32-C3 Build (PlatformIO): `pio run -e esp32_c3_supermini`
+  - C3 hardware regression tests: `make -C firmware test-c3`
 
 ## Architecture Rules
 - Edge-based storage (`horizontal_walls[11][10]`, `vertical_walls[10][11]`) guarantees single source of truth for walls.
 - Decoupled pure logic: `maze_solver/core/` contains no hardware dependencies, IO side-effects, or random logic.
 - Deterministic decisions: Tie-breaks prioritize maintaining current heading.
 - Strategy: Complete search run (banks Run #1) -> Compute turn-weighted path -> Repeat verified path to maximize score.
+- Embedded motion and sensor calls return success/failure; update pose or credit a run only after confirmed movement and goal arrival.
+- ESP32 speed runs must use visited cells; an unvisited goal cell is not a verified entrance.
+- Physical cell-center pitch is 192 mm (180 mm interior + 12 mm wall), distinct from the interior cell size.
+- Simulation only credits trajectories the mouse executes; diagonal geometry is not an ESP32 motion primitive.
+- Team hardware is C3 SuperMini/TB6612/MPU6500/3x VL53L0X without encoders. Follow docs/HARDWARE_C3.md; motor pins are confirmed, sensor pins proposed. No timed-motion success without measured displacement.

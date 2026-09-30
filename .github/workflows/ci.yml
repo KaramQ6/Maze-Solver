@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   quality-gates:
@@ -24,13 +24,27 @@ jobs:
           pip install ruff mypy pytest pytest-cov
 
       - name: Run Ruff Linter
-        run: ruff check .
+        run: ruff check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py
 
       - name: Check Ruff Formatting
-        run: ruff format --check .
+        run: ruff format --check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py
 
       - name: Run Mypy Typecheck
         run: mypy maze_solver tests
 
       - name: Run Pytest Test Suite
         run: pytest -v --cov=maze_solver
+
+      - name: Run C99 firmware tests
+        run: make -C firmware test
+
+      - name: Run C3 motor and sensor regression tests
+        run: make -C firmware test-c3
+
+      - name: Check C++ firmware host compilation
+        run: g++ -std=c++11 -Wall -Wextra -Werror -fsyntax-only -I firmware/include firmware/src/main.cpp firmware/src/controller.cpp firmware/src/sensors.cpp firmware/src/motors.cpp firmware/src/encoder.cpp firmware/test/test_firmware_sim.cpp
+
+      - name: Build ESP32-C3 firmware
+        run: |
+          python -m pip install 'platformio>=6,<7'
+          pio run -e esp32_c3_supermini

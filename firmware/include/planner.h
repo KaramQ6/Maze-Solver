@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define MAX_PATH_COMMANDS 100
+#define MAX_PATH_COMMANDS 400
 #define TURN_PENALTY_DEFAULT 1.5f
 
 /**
@@ -44,7 +44,7 @@ int planner_plan_safe_path(
     const MazeGrid *grid,
     RobotPose start_pose,
     float turn_penalty,
-    const bool known_cells[MAZE_ROWS][MAZE_COLS],
+    bool known_cells[MAZE_ROWS][MAZE_COLS],
     MoveCommand out_commands[MAX_PATH_COMMANDS]
 );
 

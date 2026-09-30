@@ -59,30 +59,30 @@ class MatchSimulator:
         self, commands: list[MovementCommand], mouse: VirtualMouse
     ) -> tuple[bool, float]:
         """Execute a planned command sequence and compute execution time."""
-        from maze_solver.core.diagonal_planner import (
-            evaluate_smoothed_trajectory_time,
-            smooth_path_to_diagonals,
+        from maze_solver.core.kinematics import evaluate_trajectory_kinematics
+
+        executed: list[MovementCommand] = []
+        for cmd in commands:
+            if not mouse.apply_command(cmd, self.ground_truth):
+                break
+            executed.append(cmd)
+
+        reached_goal = (
+            len(executed) == len(commands)
+            and (mouse.pose.cell.row, mouse.pose.cell.col) in MazeConfig.GOAL_CELLS
         )
 
-        # Execute physical movement
-        for cmd in commands:
-            ok = mouse.apply_command(cmd, self.ground_truth)
-            if not ok:
-                return False, 0.0
-
-        # If kinematic profile provided, compute continuous F1 dynamics with smoothing
+        # Estimate the commands actually executed, not an unexecuted diagonal shortcut.
         if self.kinematic_profile is not None:
-            start_st = RobotState(self.start_cell, self.initial_heading)
-            segments = smooth_path_to_diagonals(commands, self.discovered_grid, start_st)
-            run_time = evaluate_smoothed_trajectory_time(segments, self.kinematic_profile)
-            return True, run_time
+            run_time = evaluate_trajectory_kinematics(executed, self.kinematic_profile)
+            return reached_goal, run_time
 
-        cell_moves = sum(1 for c in commands if c == MovementCommand.FORWARD)
-        turn_moves = len(commands) - cell_moves
+        cell_moves = sum(1 for c in executed if c == MovementCommand.FORWARD)
+        turn_moves = len(executed) - cell_moves
         run_time = (cell_moves * self.speed_cell_time) + (
             turn_moves * self.speed_cell_time * self.turn_penalty
         )
-        return True, run_time
+        return reached_goal, run_time
 
     def run_match(self) -> MatchResult:
         """Execute full match simulation through all phases."""
@@ -102,7 +102,7 @@ class MatchSimulator:
         )
 
         self.elapsed_time += search_sim.run_time_estimate
-        if search_sim.success:
+        if search_sim.success and self.elapsed_time <= self.match_budget_seconds:
             self.successful_runs += 1
             self.official_time = search_sim.run_time_estimate
             self.runs.append(
@@ -136,6 +136,7 @@ class MatchSimulator:
                 runs=self.runs,
             )
 
+        verified_cells = {state.cell for state in search_sim.path}
         # Transition to start: either autonomous return-trip mapping or manual reposition
         if self.enable_return_trip and search_sim.path:
             from maze_solver.core.return_explorer import run_return_trip
@@ -147,10 +148,22 @@ class MatchSimulator:
                 ground_truth=self.ground_truth,
                 discovered_grid=self.discovered_grid,
                 target_cell=self.start_cell,
+                visited_cells=verified_cells,
             )
             self.elapsed_time += ret_time
+            if not ret_ok:
+                self.elapsed_time += self.reposition_time_seconds
         else:
             self.elapsed_time += self.reposition_time_seconds
+
+        if self.elapsed_time >= self.match_budget_seconds:
+            return MatchResult(
+                total_successful_runs=self.successful_runs,
+                official_time=self.official_time,
+                final_score=calculate_mmrc26_score(self.successful_runs, self.official_time),
+                total_elapsed_seconds=self.elapsed_time,
+                runs=self.runs,
+            )
 
         # ==========================================================
         # Phase B: Decision & Turn-Weighted Path Planning
@@ -160,6 +173,7 @@ class MatchSimulator:
             start_state=RobotState(self.start_cell, self.initial_heading),
             goals=MazeConfig.GOAL_CELLS,
             turn_penalty=self.turn_penalty,
+            known_cells=verified_cells,
         )
 
         if not speed_path:
@@ -178,10 +192,10 @@ class MatchSimulator:
         speed_mouse = VirtualMouse(self.start_cell, self.initial_heading)
         ok, speed_run_time = self._execute_planned_run(speed_path, speed_mouse)
 
-        if ok:
+        self.elapsed_time += speed_run_time
+        if ok and self.elapsed_time <= self.match_budget_seconds:
             self.successful_runs += 1
             self.official_time = min(self.official_time, speed_run_time)
-            self.elapsed_time += speed_run_time
             self.runs.append(
                 RunRecord(
                     run_number=run_count,
@@ -196,7 +210,7 @@ class MatchSimulator:
                 RunRecord(
                     run_number=run_count,
                     phase=MatchPhase.PHASE_C_SPEED_RUN,
-                    run_time=0.0,
+                    run_time=speed_run_time,
                     success=False,
                     commands_count=len(speed_path),
                 )
@@ -236,6 +250,7 @@ class MatchSimulator:
                     )
                 )
             else:
+                self.elapsed_time += rep_time
                 break
 
         return MatchResult(

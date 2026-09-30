@@ -47,6 +47,25 @@ class VirtualMouse:
 
         return WallSensations(front=front_wall, left=left_wall, right=right_wall)
 
+    def sense_confirmed_walls(self, ground_truth: MazeGrid) -> WallSensations:
+        """Confirm split votes with two more samples; use three when readings agree."""
+        samples = [self.sense_walls(ground_truth) for _ in range(3)]
+        if any(
+            count in (1, 2)
+            for count in (
+                sum(sample.front for sample in samples),
+                sum(sample.left for sample in samples),
+                sum(sample.right for sample in samples),
+            )
+        ):
+            samples.extend(self.sense_walls(ground_truth) for _ in range(2))
+        majority = len(samples) // 2 + 1
+        return WallSensations(
+            front=sum(sample.front for sample in samples) >= majority,
+            left=sum(sample.left for sample in samples) >= majority,
+            right=sum(sample.right for sample in samples) >= majority,
+        )
+
     def apply_command(self, command: MovementCommand, ground_truth: MazeGrid) -> bool:
         """Execute a discrete movement command.
 

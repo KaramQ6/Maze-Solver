@@ -1,6 +1,6 @@
 /**
  * @file motors.h
- * @brief TB6612FNG 4-pin DC motor driver interface for ESP32-S3.
+ * @brief Signed-speed motor interface; TB6612FNG or MX1508 selected in config.h.
  * @author MMRC26 Team
  */
 
