@@ -3,20 +3,16 @@
 Implements the official MMS protocol with strict stdin/stdout synchronization.
 """
 
+import os
 import sys
+import time
 from collections import defaultdict
 from typing import Any
 
-from maze_solver.core.diagonal_planner import (
-    MotionSegmentType,
-    evaluate_smoothed_trajectory_time,
-    smooth_path_to_diagonals,
-)
 from maze_solver.core.floodfill import (
     compute_distance_map,
     get_next_search_move,
 )
-from maze_solver.core.kinematics import KinematicProfile
 from maze_solver.core.maze_grid import MazeGrid
 from maze_solver.core.planner import path_cost, plan_turn_weighted_path
 from maze_solver.core.types import (
@@ -26,6 +22,35 @@ from maze_solver.core.types import (
     RobotState,
     WallSensations,
 )
+
+
+def read_mms_start(width: int, height: int) -> RobotState:
+    """Validate the simulator's launch pose and convert bottom-left MMS coordinates."""
+    if width < 1 or height < 1:
+        raise ValueError("MMS maze dimensions must be positive")
+    keys = ("MMS_START_X", "MMS_START_Y", "MMS_START_HEADING")
+    provided = [key in os.environ for key in keys]
+    if any(provided) and not all(provided):
+        raise ValueError("MMS start requires X, Y, and heading together")
+    try:
+        x = int(os.environ.get("MMS_START_X", "0"))
+        y = int(os.environ.get("MMS_START_Y", "0"))
+    except ValueError as error:
+        raise ValueError("MMS start coordinates must be integers") from error
+    headings = {
+        "n": Direction.NORTH,
+        "e": Direction.EAST,
+        "s": Direction.SOUTH,
+        "w": Direction.WEST,
+    }
+    heading = os.environ.get("MMS_START_HEADING", "n").lower()
+    if heading not in headings or not (0 <= x < width and 0 <= y < height):
+        raise ValueError("MMS start must be inside the maze with a cardinal heading (n/e/s/w)")
+    return RobotState(Cell(height - 1 - y, x), headings[heading])
+
+
+class MMSResetRequested(Exception):
+    """The native mouse has reset; discard the old discovered map and restart."""
 
 
 def find_first_unvisited_on_path(
@@ -60,7 +85,11 @@ class MMS_API:
         sys.stdout.flush()
         if return_type is not None:
             response = sys.stdin.readline().strip()
+            if not response:
+                raise RuntimeError("MMS closed the protocol stream")
             if return_type is bool:
+                if response not in ("true", "false"):
+                    raise RuntimeError(f"Invalid MMS boolean response: {response}")
                 return response == "true"
             return return_type(response)
         return None
@@ -75,6 +104,7 @@ class MMS_API:
 
     @classmethod
     def wall_front(cls) -> bool:
+        cls.check_reset()
         return bool(cls._command(["wallFront"], bool))
 
     @classmethod
@@ -91,6 +121,7 @@ class MMS_API:
 
     @classmethod
     def move_forward(cls) -> None:
+        cls.check_reset()
         # MMS replies with ack / crash
         response = cls._command(["moveForward"], str)
         if response != "ack":
@@ -98,6 +129,7 @@ class MMS_API:
 
     @classmethod
     def turn_right(cls) -> None:
+        cls.check_reset()
         # MMS replies with ack
         response = cls._command(["turnRight"], str)
         if response != "ack":
@@ -105,6 +137,7 @@ class MMS_API:
 
     @classmethod
     def turn_left(cls) -> None:
+        cls.check_reset()
         # MMS replies with ack
         response = cls._command(["turnLeft"], str)
         if response != "ack":
@@ -123,12 +156,37 @@ class MMS_API:
         cls._command(["setText", x, y, text])
 
     @classmethod
+    def check_reset(cls) -> None:
+        if os.environ.get("MMS_MMRC26") == "1" and cls._command(["wasReset"], bool):
+            response = cls._command(["ackReset"], str)
+            if response != "ack":
+                raise RuntimeError(f"MMS ackReset failed: {response}")
+            raise MMSResetRequested
+
+    @classmethod
+    def set_motion_mode(cls, mode: str) -> None:
+        if mode not in ("search", "speed"):
+            raise ValueError("MMS motion mode must be search or speed")
+        if os.environ.get("MMS_MMRC26") == "1":
+            cls._command(["setMotionMode", mode])
+
+    @classmethod
     def log(cls, message: str) -> None:
         sys.stderr.write(f"[MMRC26] {message}\n")
         sys.stderr.flush()
 
 
 def run_mms_solver() -> None:
+    """Restart cleanly after an acknowledged native reset."""
+    while True:
+        try:
+            _run_mms_solver()
+            return
+        except MMSResetRequested:
+            MMS_API.log("Reset acknowledged; restarting from the selected start pose.")
+
+
+def _run_mms_solver() -> None:
     """Main control loop executing inside the MMS simulator."""
     width = MMS_API.maze_width()
     height = MMS_API.maze_height()
@@ -144,13 +202,16 @@ def run_mms_solver() -> None:
         grid.horizontal_walls[0][c] = True
         grid.horizontal_walls[height][c] = True
 
-    # 2. Robot starts at bottom-left corner: (x=0, y=0) in MMS -> (row=height-1, col=0)
-    current_cell = Cell(row=height - 1, col=0)
-    current_heading = Direction.NORTH
-    state = RobotState(current_cell, current_heading)
+    # 2. The native simulator supplies the same pose it uses to place the mouse.
+    start_state = read_mms_start(width, height)
+    state = start_state
+    MMS_API.set_motion_mode("search")
+    MMS_API.log(
+        f"Start: x={state.cell.col}, y={height - 1 - state.cell.row}, heading={state.heading.name}"
+    )
 
     # Mark start cell
-    MMS_API.set_color(0, 0, "c")
+    MMS_API.set_color(state.cell.col, height - 1 - state.cell.row, "c")
 
     # 3. Center goal definition (2x2 center)
     center_row_low = (height // 2) - 1
@@ -166,6 +227,10 @@ def run_mms_solver() -> None:
         gx = gc
         gy = height - 1 - gr
         MMS_API.set_color(gx, gy, "y")
+
+    if (start_state.cell.row, start_state.cell.col) in goals:
+        MMS_API.log("Start is already in the goal; no start-to-goal traversal to execute.")
+        return
 
     step_count = 0
     max_steps = width * height * 8
@@ -261,7 +326,7 @@ def run_mms_solver() -> None:
     # PHASE 1.5: RETURN TO START FOR SPEED RUN
     # -------------------------------------------------------------
     MMS_API.log("Phase 1.5: Returning to start for speed run...")
-    start_cell = (height - 1, 0)
+    start_cell = (start_state.cell.row, start_state.cell.col)
     return_goals: tuple[tuple[int, int], ...] = (start_cell,)
     return_steps = 0
     max_return_steps = width * height * 4
@@ -336,12 +401,11 @@ def run_mms_solver() -> None:
     # -------------------------------------------------------------
     max_probes = 4
     for probe_idx in range(1, max_probes + 1):
-        # Align robot to face NORTH at start position
-        while state.heading != Direction.NORTH:
+        # Align to the selected initial heading at the selected start.
+        while state.heading != start_state.heading:
             MMS_API.turn_right()
             state = RobotState(state.cell, state.heading.turn_right())
 
-        start_state = RobotState(Cell(height - 1, 0), Direction.NORTH)
         visited = set(visit_counts.keys())
 
         safe_cmds = plan_turn_weighted_path(grid, start_state, goals=goals, known_cells=visited)
@@ -471,8 +535,8 @@ def run_mms_solver() -> None:
             MMS_API.log("Probe return did not reach start; aborting speed run.")
             return
 
-        # Re-align heading to NORTH at start
-        while state.heading != Direction.NORTH:
+        # Re-align to the selected initial heading at start.
+        while state.heading != start_state.heading:
             MMS_API.turn_right()
             state = RobotState(state.cell, state.heading.turn_right())
 
@@ -499,23 +563,9 @@ def run_mms_solver() -> None:
         MMS_API.log("WARNING: No valid path to goal could be computed! Aborting speed run.")
         return
 
-    # Compute and log F1 Vacuum Suction Kinematics & Diagonal Sprints
-    segments = smooth_path_to_diagonals(speed_cmds, grid, start_state)
-    diag_count = sum(1 for s in segments if s.segment_type == MotionSegmentType.DIAGONAL_SPRINT)
-    t_base = evaluate_smoothed_trajectory_time(segments, KinematicProfile(suction_multiplier=0.0))
-    t_suction = evaluate_smoothed_trajectory_time(
-        segments, KinematicProfile(suction_multiplier=3.0)
-    )
-
-    MMS_API.log(
-        f"Championship Trajectory: {len(speed_cmds)} actions -> {len(segments)} segments "
-        f"({diag_count} diagonal sprints)"
-    )
-    MMS_API.log(
-        f"F1 Kinematics: Base Time = {t_base:.2f}s | "
-        f"Suction Fan (3.0g downforce) = {t_suction:.2f}s"
-    )
+    MMS_API.set_motion_mode("speed")
     MMS_API.log(f"Phase 3: Executing speed run ({len(speed_cmds)} actions)...")
+    speed_run_started = time.monotonic()
 
     # Execute speed run through the real MMS API
     state = start_state
@@ -538,8 +588,16 @@ def run_mms_solver() -> None:
 
     # Check if speed run reached the goal
     if (state.cell.row, state.cell.col) in goals:
-        MMS_API.log(f"CHAMPIONSHIP FINISH! Reached goal in {len(speed_cmds)} actions.")
+        elapsed = time.monotonic() - speed_run_started
+        MMS_API.log(
+            f"CHAMPIONSHIP FINISH! Reached goal in {len(speed_cmds)} actions; "
+            f"wall time = {elapsed:.2f}s (includes Pause and protocol overhead)."
+        )
 
 
 if __name__ == "__main__":
-    run_mms_solver()
+    try:
+        run_mms_solver()
+    except (RuntimeError, ValueError) as error:
+        MMS_API.log(f"Solver stopped: {error}")
+        sys.exit(1)

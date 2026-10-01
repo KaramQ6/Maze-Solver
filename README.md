@@ -84,6 +84,27 @@ Maze-Solver/
 └── .github/workflows/       # Automated CI pipeline
 ```
 
+## MMS Simulator (Windows)
+
+The customized native MMS includes **Set Start** (any cell and cardinal heading) and
+**Robot Speed** (measured search-cell, speed-run-cell, and 90-degree turn times).
+Start, return, speed run, and Reset share the selected pose. Timing changes apply to
+the next movement; playback runs in real time (1x).
+
+```powershell
+# First-time local Qt/MinGW setup and build
+python tools/mms/build_mms.py --setup
+
+# Open the customized simulator
+.\launch_mms.bat
+
+# Native UI and protocol regressions
+python tools/mms/build_mms.py --test
+```
+
+The built executable is `tools/mms/bin/mms.exe`. Default timing values are illustrative,
+not measurements of the team's ESP32-C3 robot. See [MMS setup and calibration](docs/MMS_SETUP.md).
+
 ## Interactive Web Dashboard
 
 Launch the browser dashboard with real-time maze editing, distance heatmap, diagonal trajectory visualization, and 480s match simulation:

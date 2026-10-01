@@ -1,0 +1,557 @@
+diff --git a/src/Dimensions.cpp b/src/Dimensions.cpp
+index 0bbbcf0..8d2f89a 100644
+--- a/src/Dimensions.cpp
++++ b/src/Dimensions.cpp
+@@ -8,7 +8,7 @@ Distance Dimensions::halfTileLength() { return tileLength() / 2.0; }
+ 
+ Distance Dimensions::quarterTileLength() { return tileLength() / 4.0; }
+ 
+-Distance Dimensions::wallLength() { return Distance::Meters(0.168); }
++Distance Dimensions::wallLength() { return Distance::Meters(0.180); }
+ 
+ Distance Dimensions::wallWidth() { return Distance::Meters(0.012); }
+ 
+diff --git a/src/Stats.cpp b/src/Stats.cpp
+index e578d69..84acbf3 100644
+--- a/src/Stats.cpp
++++ b/src/Stats.cpp
+@@ -92,6 +92,9 @@ float Stats::getEffectiveDistance(int distance) {
+ }
+ 
+ void Stats::startRun() {
++  if (startedRun) {
++    return;
++  }
+   reset(StatsEnum::CURRENT_RUN_TURNS);
+   reset(StatsEnum::CURRENT_RUN_DISTANCE);
+   reset(StatsEnum::CURRENT_RUN_EFFECTIVE_DISTANCE);
+@@ -103,6 +106,9 @@ void Stats::startRun() {
+ }
+ 
+ void Stats::finishRun() {
++  if (!startedRun) {
++    return;
++  }
+   startedRun = false;
+   solved = true;
+   float currentScore = statValues[StatsEnum::CURRENT_RUN_TURNS] +
+diff --git a/src/Window.cpp b/src/Window.cpp
+index f43ab70..ddb1a09 100644
+--- a/src/Window.cpp
++++ b/src/Window.cpp
+@@ -10,6 +10,6 @@
+ #include <QMenuBar>
+ #include <QMessageBox>
+-#include <QPixmap>
++#include <QProcessEnvironment>
+ #include <QRegularExpression>
+ #include <QShortcut>
+ #include <QSplitter>
+@@ -26,6 +27,7 @@
+ #include "Dimensions.h"
+ #include "FontImage.h"
+ #include "ProcessUtilities.h"
++#include "RobotDialogs.h"
+ #include "SettingsMazeFiles.h"
+ #include "SettingsMisc.h"
+ #include "SettingsMouseAlgos.h"
+@@ -49,15 +51,8 @@ const QString Window::ACK = "ack";
+ const QString Window::CRASH = "crash";
+ const QString Window::INVALID = "invalid";
+ 
+-const int Window::SPEED_SLIDER_MAX = 99;
+-const int Window::SPEED_SLIDER_DEFAULT = 33;
+-const double Window::MIN_PROGRESS_PER_SECOND = 10.0;
+-const double Window::MAX_PROGRESS_PER_SECOND = 5000.0;
+ const double Window::MAX_SLEEP_SECONDS = 0.008;
+ 
+-const SemiPosition Window::INITIAL_STARTING_POSITION = {1, 1};
+-const SemiDirection Window::INITIAL_STARTING_DIRECTION = SemiDirection::NORTH;
+-
+ Window::Window(QWidget *parent)
+     : QMainWindow(parent),
+       m_map(new Map()),
+@@ -97,6 +92,12 @@ Window::Window(QWidget *parent)
+       m_pauseButton(new QPushButton("Pause")),
+       m_resetButton(new QPushButton("Reset")),
+ 
++      // Robot settings
++      m_robotStart(),
++      m_motionTiming(loadMotionTiming()),
++      m_speedRunMode(false),
++      m_robotSummary(new QLabel()),
++
+       // Communication
+       m_logBuffer(QStringList()),
+       m_commandBuffer(QStringList()),
+@@ -104,14 +105,13 @@ Window::Window(QWidget *parent)
+       m_commandQueueTimer(new QTimer()),
+ 
+       // Movement
+-      m_startingPosition(INITIAL_STARTING_POSITION),
+-      m_startingDirection(INITIAL_STARTING_DIRECTION),
++      m_startingPosition(m_robotStart.semiPosition()),
++      m_startingDirection(m_robotStart.heading),
+       m_movement(Movement::NONE),
+       m_doomedToCrash(false),
+       m_halfStepsToMoveForward(0),
+       m_movementProgress(0.0),
+-      m_movementStepSize(0.0),
+-      m_speedSlider(new QSlider(Qt::Horizontal)),
++      m_activeMovementSeconds(0.0),
+ 
+       // Helpers
+       m_tilesWithColor(QSet<QPair<int, int>>()),
+@@ -151,6 +151,8 @@ Window::Window(QWidget *parent)
+   // Add the mouse algo build and run buttons
+   controlsLayout->addWidget(m_buildButton, 0, 0);
+   controlsLayout->addWidget(m_runButton, 1, 0);
++  m_runButton->setObjectName("runAlgorithm");
++  m_runOutput->setObjectName("algorithmOutput");
+   connect(m_buildButton, &QPushButton::clicked, this, &Window::startBuild);
+   connect(m_runButton, &QPushButton::clicked, this, &Window::startRun);
+ 
+@@ -166,6 +167,8 @@ Window::Window(QWidget *parent)
+   // Add mouse algo pause and reset buttons
+   m_pauseButton->setEnabled(false);
+   m_resetButton->setEnabled(false);
++  m_pauseButton->setObjectName("pauseAlgorithm");
++  m_resetButton->setObjectName("resetAlgorithm");
+   controlsLayout->addWidget(m_pauseButton, 0, 2, 1, 1);
+   controlsLayout->addWidget(m_resetButton, 0, 3, 1, 1);
+   connect(m_pauseButton, &QPushButton::clicked, this,
+@@ -173,18 +176,22 @@ Window::Window(QWidget *parent)
+   connect(m_resetButton, &QPushButton::pressed, this,
+           &Window::onResetButtonPressed);
+ 
+-  // Add mouse algo speed
+-  QLabel *turtle = new QLabel();
+-  QLabel *rabbit = new QLabel();
+-  turtle->setPixmap(QPixmap(":/resources/icons/turtle.png"));
+-  rabbit->setPixmap(QPixmap(":/resources/icons/rabbit.png"));
+-  QHBoxLayout *speedLayout = new QHBoxLayout();
+-  speedLayout->addWidget(turtle);
+-  speedLayout->addWidget(m_speedSlider);
+-  speedLayout->addWidget(rabbit);
+-  controlsLayout->addLayout(speedLayout, 1, 2, 1, 2);
+-  m_speedSlider->setRange(0, SPEED_SLIDER_MAX);
+-  m_speedSlider->setValue(SPEED_SLIDER_DEFAULT);
++  auto robotBox = new QGroupBox("Robot (ESP32-C3) - real time (1x)");
++  auto robotLayout = new QVBoxLayout(robotBox);
++  auto robotButtons = new QHBoxLayout();
++  auto startButton = new QPushButton("Set Start");
++  auto speedButton = new QPushButton("Robot Speed");
++  startButton->setObjectName("setRobotStart");
++  speedButton->setObjectName("setRobotSpeed");
++  connect(startButton, &QPushButton::clicked, this, &Window::onStartButtonPressed);
++  connect(speedButton, &QPushButton::clicked, this, &Window::onRobotSpeedButtonPressed);
++  robotButtons->addWidget(startButton);
++  robotButtons->addWidget(speedButton);
++  robotLayout->addLayout(robotButtons);
++  m_robotSummary->setObjectName("robotSummary");
++  m_robotSummary->setWordWrap(true);
++  robotLayout->addWidget(m_robotSummary);
++  panelLayout->addWidget(robotBox);
+ 
+   // Add config box labels
+   QLabel *mazeLabel = new QLabel("Maze");
+@@ -312,6 +312,7 @@ Window::Window(QWidget *parent)
+   // Configure command queue timer
+   m_commandQueueTimer->setSingleShot(true);
++  m_commandQueueTimer->setTimerType(Qt::PreciseTimer);
+   connect(m_commandQueueTimer, &QTimer::timeout, this,
+           &Window::processQueuedCommands);
+ 
+   // Start the graphics loop
+@@ -409,6 +416,9 @@ void Window::updateMazeAndPath(Maze *maze, QString path) {
+   updateMaze(maze);
+   m_currentMazeFile = path;
+   SettingsMisc::setRecentMazeFile(path);
++  m_robotStart = loadRobotStart(path, QSize(mazeWidth(), mazeHeight()));
++  showStartMarker();
++  refreshRobotSummary();
+ }
+ 
+ void Window::updateMaze(Maze *maze) {
+@@ -654,6 +664,11 @@ void Window::startRun() {
+   // Remove the old mouse, add a new mouse
+   removeMouseFromMaze();
+   m_mouse = new Mouse();
++  m_startingPosition = m_robotStart.semiPosition();
++  m_startingDirection = m_robotStart.heading;
++  m_mouse->teleport(getCoordinate(m_startingPosition),
++                    DIRECTION_TO_ANGLE().value(m_startingDirection));
++  m_speedRunMode = false;
+   m_view = new MazeView(m_maze, false);
+   m_mouseGraphic = new MouseGraphic(m_mouse);
+   m_map->setView(m_view);
+@@ -661,6 +676,13 @@ void Window::startRun() {
+ 
+   // Instantiate a new process
+   QProcess *process = new QProcess();
++  auto environment = QProcessEnvironment::systemEnvironment();
++  environment.insert("MMS_MMRC26", "1");
++  environment.insert("MMS_START_X", QString::number(m_robotStart.x));
++  environment.insert("MMS_START_Y", QString::number(m_robotStart.y));
++  environment.insert("MMS_START_HEADING", QString(m_robotStart.headingChar()));
++  environment.insert("PYTHONUTF8", "1");
++  process->setProcessEnvironment(environment);
+ 
+   // Print stderr
+   connect(process, &QProcess::readyReadStandardError, this, [=]() {
+@@ -794,11 +816,12 @@ void Window::removeMouseFromMaze() {
+   m_commandBuffer.clear();
+ 
+   // Reset movement state
+-  m_startingPosition = INITIAL_STARTING_POSITION;
+-  m_startingDirection = INITIAL_STARTING_DIRECTION;
++  m_startingPosition = m_robotStart.semiPosition();
++  m_startingDirection = m_robotStart.heading;
+   m_movement = Movement::NONE;
+   m_movementProgress = 0.0;
+-  m_movementStepSize = 0.0;
++  m_activeMovementSeconds = 0.0;
++  m_movementClock.invalidate();
+ 
+   // Reset other mouse state
+   m_tilesWithColor.clear();
+@@ -806,11 +829,19 @@ void Window::removeMouseFromMaze() {
+ }
+ 
+ void Window::onPauseButtonPressed() {
++  if (!m_isPaused && isMoving()) {
++    processQueuedCommands();
++  }
+   m_isPaused = !m_isPaused;
+   if (m_isPaused) {
++    m_commandQueueTimer->stop();
++    m_movementClock.invalidate();
+     m_pauseButton->setText("Resume");
+     m_runStatus->setText("PAUSED");
+   } else {
++    if (isMoving()) {
++      m_movementClock.start();
++    }
+     m_pauseButton->setText("Pause");
+     m_runStatus->setText("RUNNING");
+     processQueuedCommands();
+@@ -823,6 +854,87 @@ void Window::onResetButtonPressed() {
+   m_wasReset = true;
+ }
+ 
++void Window::refreshRobotSummary() {
++  m_robotSummary->setText(QString("Start: (%1, %2), %3 | Search: %4 s/cell | "
++      "Speed run: %5 s/cell | Turn: %6 s/90 deg\n%7")
++      .arg(m_robotStart.x).arg(m_robotStart.y)
++      .arg(QString(m_robotStart.headingChar()).toUpper())
++      .arg(m_motionTiming.searchCellSeconds, 0, 'f', 3)
++      .arg(m_motionTiming.speedCellSeconds, 0, 'f', 3)
++      .arg(m_motionTiming.turn90Seconds, 0, 'f', 3)
++      .arg(m_motionTiming.calibrated ? "Measured robot timing" : "Uncalibrated - enter measured values"));
++}
++
++void Window::showStartMarker() {
++  auto graphic = m_truth->getMazeGraphic();
++  graphic->setColor(m_robotStart.x, m_robotStart.y, Color::CYAN);
++  graphic->setText(m_robotStart.x, m_robotStart.y,
++                   "S:" + QString(m_robotStart.headingChar()).toUpper());
++}
++
++void Window::onStartButtonPressed() {
++  StartDialog dialog(m_robotStart, QSize(mazeWidth(), mazeHeight()), this);
++  if (dialog.exec() != QDialog::Accepted) {
++    return;
++  }
++  auto selected = dialog.selectedStart();
++  if (selected.x == m_robotStart.x && selected.y == m_robotStart.y &&
++      selected.heading == m_robotStart.heading) {
++    return;
++  }
++  bool restart = m_runProcess != nullptr;
++  cancelRun();
++  auto graphic = m_truth->getMazeGraphic();
++  graphic->clearColor(m_robotStart.x, m_robotStart.y);
++  int distance = m_maze->getTile(m_robotStart.x, m_robotStart.y)->getDistance();
++  graphic->setText(m_robotStart.x, m_robotStart.y,
++                   distance >= 0 ? QString::number(distance) : "inf");
++  m_robotStart = selected;
++  saveRobotStart(m_currentMazeFile, m_robotStart);
++  stats->resetAll();
++  showStartMarker();
++  refreshRobotSummary();
++  if (restart) {
++    startRun();
++  }
++}
++
++void Window::onRobotSpeedButtonPressed() {
++  TimingDialog dialog(m_motionTiming, this);
++  if (dialog.exec() != QDialog::Accepted) {
++    return;
++  }
++  m_motionTiming = dialog.selectedTiming();
++  saveMotionTiming(m_motionTiming);
++  refreshRobotSummary();
++}
++
++bool Window::isAtSelectedStart() const {
++  return m_startingPosition.x == 2 * m_robotStart.x + 1 &&
++         m_startingPosition.y == 2 * m_robotStart.y + 1;
++}
++
++void Window::beginMovementTiming() {
++  double cellSeconds = m_speedRunMode ? m_motionTiming.speedCellSeconds
++                                     : m_motionTiming.searchCellSeconds;
++  if (m_movement == Movement::MOVE_STRAIGHT || m_movement == Movement::MOVE_DIAGONAL) {
++    m_activeMovementSeconds = cellSeconds * m_halfStepsToMoveForward / 2.0;
++    if (m_movement == Movement::MOVE_DIAGONAL) {
++      m_activeMovementSeconds *= qSqrt(2.0);
++    }
++  } else {
++    bool halfTurn = m_movement == Movement::TURN_LEFT_45 || m_movement == Movement::TURN_RIGHT_45;
++    m_activeMovementSeconds = m_motionTiming.turn90Seconds * (halfTurn ? 0.5 : 1.0);
++  }
++  m_movementClock.start();
++}
++
++double Window::elapsedMovementProgress() {
++  double seconds = m_movementClock.nsecsElapsed() / 1e9;
++  m_movementClock.start();
++  return progressRequired(m_movement) * seconds / m_activeMovementSeconds;
++}
++
+ QStringList Window::processText(QString text, QStringList *buffer) {
+   QStringList lines;
+ 
+@@ -851,6 +963,14 @@ QStringList Window::processText(QString text, QStringList *buffer) {
+ }
+ 
+ bool Window::dispatchCommand(QString command) {
++  // No response: this extension must not consume a movement acknowledgement.
++  if (command.startsWith("setMotionMode")) {
++    if (command != "setMotionMode search" && command != "setMotionMode speed") {
++      return false;
++    }
++    m_speedRunMode = command == "setMotionMode speed";
++    return true;
++  }
+   // For performance reasons, handle no-response commands inline (don't queue
+   // them with the commands that elicit a response, just perform the action)
+   if (command.startsWith("setWall") || command.startsWith("clearWall")) {
+@@ -1173,7 +1293,7 @@ void Window::processQueuedCommands() {
+   while (!m_commandQueue.isEmpty() && !m_isPaused) {
+     QString response = "";
+     if (isMoving()) {
+-      updateMouseProgress(m_movementStepSize);
++      updateMouseProgress(elapsedMovementProgress());
+       if (!isMoving()) {
+         if (m_doomedToCrash) {
+           response = CRASH;
+@@ -1291,19 +1411,21 @@ void Window::updateMouseProgress(double progress) {
+   // Teleport the mouse, reset movement state if done
+   m_mouse->teleport(currentTranslation, currentRotation);
+   if (remaining == 0.0) {
++    bool translated = m_movement == Movement::MOVE_STRAIGHT ||
++                      m_movement == Movement::MOVE_DIAGONAL;
+     m_startingPosition = m_mouse->getCurrentDiscretizedTranslation();
+     m_startingDirection = m_mouse->getCurrentDiscretizedRotation();
+     m_movementProgress = 0.0;
+-    m_movementStepSize = 0.0;
++    m_activeMovementSeconds = 0.0;
++    m_movementClock.invalidate();
+     m_movement = Movement::NONE;
+     m_halfStepsToMoveForward = 0;
+     // TODO: upforgrabs
+     // This if-else can probably be moved outside of the enclosing if-block
+     // determine if the goal was reached
+-    if (m_maze->isInCenter(m_startingPosition.toMazeLocation())) {
++    if (translated && !m_doomedToCrash && m_maze->isInCenter(m_startingPosition.toMazeLocation())) {
+       stats->finishRun();  // record a completed start-to-finish run
+-    } else if (m_startingPosition.toMazeLocation().first == 0 &&
+-               m_startingPosition.toMazeLocation().second == 0) {
++    } else if (translated && isAtSelectedStart()) {
+       stats->endUnfinishedRun();
+     }
+   }
+@@ -1315,13 +1437,7 @@ void Window::scheduleMouseProgressUpdate() {
+   double progressRemaining = required - m_movementProgress;
+   ASSERT_LT(0.0, progressRemaining);
+ 
+-  // Calculate progressPerSecond for non-linear slider
+-  double value = static_cast<double>(m_speedSlider->value());
+-  double fraction = value / SPEED_SLIDER_MAX;
+-  double rangeMin = qPow(MIN_PROGRESS_PER_SECOND, .25);
+-  double rangeMax = qPow(MAX_PROGRESS_PER_SECOND, .25);
+-  double rangeValue = (1.0 - fraction) * rangeMin + fraction * rangeMax;
+-  double progressPerSecond = qPow(rangeValue, 4);
++  double progressPerSecond = required / m_activeMovementSeconds;
+ 
+   // Determine seconds remaing
+   double secondsRemaining = progressRemaining / progressPerSecond;
+@@ -1331,8 +1447,7 @@ void Window::scheduleMouseProgressUpdate() {
+   }
+ 
+   // Update step size, set the timer
+-  m_movementStepSize = progressRemaining;
+-  m_commandQueueTimer->start(secondsRemaining * 1000);
++  m_commandQueueTimer->start(qMax(1, static_cast<int>(qCeil(secondsRemaining * 1000))));
+ }
+ 
+ bool Window::isMoving() { return m_movement != Movement::NONE; }
+@@ -1440,14 +1555,14 @@ bool Window::moveForward(int numHalfSteps) {
+ 
+   // TODO: upforgrabs
+   // Starting position shouldn't be hardcoded here since it can depend on maze
+-  if (m_startingPosition.toMazeLocation().first == 0 &&
+-      m_startingPosition.toMazeLocation().second == 0) {
++  if (isAtSelectedStart()) {
+     stats->startRun();
+   }
+   // TODO: upforgrabs
+   // Half steps shouldn't count as a full move
+   // increase the stats by the distance that will be travelled
+   stats->addDistance(numHalfSteps);
++  beginMovementTiming();
+ 
+   // Return true so that the allowable movement can be executed
+   return true;
+@@ -1460,6 +1575,9 @@ void Window::turn(Movement movement) {
+             movement == Movement::TURN_RIGHT_90);
+ 
+   m_movement = movement;
++  if (isAtSelectedStart()) {
++    stats->startRun();
++  }
+   // TODO: upforgrabs
+   // Setting these member variables should be unnecessary here
+   m_doomedToCrash = false;
+@@ -1467,6 +1585,7 @@ void Window::turn(Movement movement) {
+   // TODO: upforgrabs
+   // Half turns shouldn't count as full turn
+   stats->addTurn();
++  beginMovementTiming();
+ }
+ 
+ void Window::setWall(int x, int y, QChar direction) {
+@@ -1556,12 +1675,14 @@ void Window::clearAllText() {
+ bool Window::wasReset() { return m_wasReset; }
+ 
+ void Window::ackReset() {
+-  m_mouse->reset();
+-  m_startingPosition = INITIAL_STARTING_POSITION;
+-  m_startingDirection = INITIAL_STARTING_DIRECTION;
++  m_startingPosition = m_robotStart.semiPosition();
++  m_startingDirection = m_robotStart.heading;
++  m_mouse->teleport(getCoordinate(m_startingPosition),
++                    DIRECTION_TO_ANGLE().value(m_startingDirection));
+   m_movement = Movement::NONE;
+   m_movementProgress = 0.0;
+-  m_movementStepSize = 0.0;
++  m_activeMovementSeconds = 0.0;
++  m_movementClock.invalidate();
+   m_resetButton->setEnabled(true);
+   m_resetButton->setText("Reset");
+   m_wasReset = false;
+diff --git a/src/Window.h b/src/Window.h
+index 39224e2..03700f0 100644
+--- a/src/Window.h
++++ b/src/Window.h
+@@ -3,6 +3,7 @@
+ #include <QChar>
+ #include <QCloseEvent>
+ #include <QComboBox>
++#include <QElapsedTimer>
+ #include <QGridLayout>
+ #include <QLabel>
+ #include <QMainWindow>
+@@ -20,6 +21,7 @@
+ #include "MazeView.h"
+ #include "Mouse.h"
+ #include "MouseGraphic.h"
++#include "RobotConfig.h"
+ #include "Stats.h"
+ 
+ namespace mms {
+@@ -134,6 +136,21 @@ class Window : public QMainWindow {
+   void onPauseButtonPressed();
+   void onResetButtonPressed();
+ 
++  // ----- Robot calibration / selected start -----
++
++  RobotStart m_robotStart;
++  MotionTiming m_motionTiming;
++  bool m_speedRunMode;
++  QLabel *m_robotSummary;
++
++  void onStartButtonPressed();
++  void onRobotSpeedButtonPressed();
++  void refreshRobotSummary();
++  void showStartMarker();
++  bool isAtSelectedStart() const;
++  void beginMovementTiming();
++  double elapsedMovementProgress();
++
+   // ----- Communication -----
+ 
+   static const QString ACK;
+@@ -156,18 +173,11 @@ class Window : public QMainWindow {
+ 
+   // ----- Movement -----
+ 
+-  static const int SPEED_SLIDER_MAX;
+-  static const int SPEED_SLIDER_DEFAULT;
+-  static const double MIN_PROGRESS_PER_SECOND;
+-  static const double MAX_PROGRESS_PER_SECOND;
+   static const double MAX_SLEEP_SECONDS;
+ 
+   // TODO: upforgrabs
+   // Encapsulate this state in the mouse class
+ 
+-  static const SemiPosition INITIAL_STARTING_POSITION;
+-  static const SemiDirection INITIAL_STARTING_DIRECTION;
+-
+   SemiPosition m_startingPosition;
+   SemiDirection m_startingDirection;
+   Movement m_movement;
+@@ -175,8 +185,8 @@ class Window : public QMainWindow {
+   int m_halfStepsToMoveForward;  // the number of allowable half-steps for the
+                                  // movement
+   double m_movementProgress;
+-  double m_movementStepSize;
+-  QSlider *m_speedSlider;
++  double m_activeMovementSeconds;
++  QElapsedTimer m_movementClock;
+ 
+   double progressRequired(Movement movement);
+   void updateMouseProgress(double progress);
+diff --git a/src/Mouse.cpp b/src/Mouse.cpp
+--- a/src/Mouse.cpp
++++ b/src/Mouse.cpp
+@@ -62,14 +62,6 @@ Mouse::Mouse() {
+   m_initialWheelPolygon.getTriangles();
+ }
+ 
+-// TODO: upforgrabs
+-// The initial direction probably shouldn't be hardcoded here nor in
+-// constructor. Instead, it should be set by the calling code.
+-void Mouse::reset() {
+-  teleport(m_initialTranslation,
+-           DIRECTION_TO_ANGLE().value(SemiDirection::NORTH));
+-}
+-
+ void Mouse::teleport(const Coordinate &translation, const Angle &rotation) {
+   m_currentTranslation = translation;
+   m_currentRotation = rotation;
+diff --git a/src/Mouse.h b/src/Mouse.h
+--- a/src/Mouse.h
++++ b/src/Mouse.h
+@@ -42,9 +42,6 @@ class Mouse {
+  public:
+   Mouse();
+ 
+-  // Resets the mouse to the beginning of the maze
+-  void reset();
+-
+   // Sets the current translation and rotation of the mouse
+   void teleport(const Coordinate &translation, const Angle &rotation);
+ 

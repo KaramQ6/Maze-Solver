@@ -1,0 +1,6 @@
+/build-deps/
+/sdk/
+/source/
+/build/
+/bin/
+*.log

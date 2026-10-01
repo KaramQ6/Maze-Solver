@@ -10,6 +10,7 @@
 
 ## Tech Stack & Commands
 - **Language**: Python 3.11+
+- **Customized native MMS**: build workflow and extension contracts are owned by `tools/mms/CLAUDE.md`; user setup is in `docs/MMS_SETUP.md`.
 - **Commands**:
   - Run Tests: `pytest -v`
   - Check Linter: `ruff check maze_solver tests mms_main.py convert_mazes.py tools/register_mazes_in_mms.py`
